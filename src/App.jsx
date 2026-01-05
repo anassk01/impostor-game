@@ -644,9 +644,15 @@ export default function ImpostorGame() {
   };
 
   const startGame = async () => {
+    // Shuffle players for turn order
     const shuffledPlayers = shuffleArray(game.players);
+
+    // Randomly select impostors (NOT the first players in the array)
     const impostorCount = Math.min(game.settings.numImpostors, Math.floor(shuffledPlayers.length / 3));
-    const impostorIds = shuffledPlayers.slice(0, impostorCount).map((p) => p.id);
+    const allPlayerIds = shuffledPlayers.map(p => p.id);
+    const shuffledIds = shuffleArray(allPlayerIds);
+    const impostorIds = shuffledIds.slice(0, impostorCount);
+
     const language = game.settings.language || 'en';
     const secretWord = pickRandom(WORD_CATEGORIES[language][game.settings.category]);
 
@@ -710,9 +716,15 @@ export default function ImpostorGame() {
   };
 
   const playAgain = async () => {
+    // Shuffle players for turn order
     const shuffledPlayers = shuffleArray(game.players);
+
+    // Randomly select impostors (NOT the first players in the array)
     const impostorCount = Math.min(game.settings.numImpostors, Math.floor(shuffledPlayers.length / 3));
-    const impostorIds = shuffledPlayers.slice(0, impostorCount).map((p) => p.id);
+    const allPlayerIds = shuffledPlayers.map(p => p.id);
+    const shuffledIds = shuffleArray(allPlayerIds);
+    const impostorIds = shuffledIds.slice(0, impostorCount);
+
     const language = game.settings.language || 'en';
     const secretWord = pickRandom(WORD_CATEGORIES[language][game.settings.category]);
 
