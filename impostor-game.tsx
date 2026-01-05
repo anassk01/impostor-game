@@ -177,6 +177,18 @@ const LobbyScreen = ({ game, playerId, onStartGame, onUpdateSettings }) => {
               />
             </div>
             <div>
+              <label className="text-white/60 text-sm block mb-2">Clue Time (per player): {game.settings.clueTime || 30}s</label>
+              <input
+                type="range"
+                min={15}
+                max={60}
+                step={5}
+                value={game.settings.clueTime || 30}
+                onChange={(e) => onUpdateSettings({ clueTime: parseInt(e.target.value) })}
+                className="w-full"
+              />
+            </div>
+            <div>
               <label className="text-white/60 text-sm block mb-2">Discussion Time: {game.settings.discussionTime || 60}s</label>
               <input
                 type="range"
@@ -215,7 +227,7 @@ const LobbyScreen = ({ game, playerId, onStartGame, onUpdateSettings }) => {
   );
 };
 
-const CluePhase = ({ game, playerId, onSubmitClue }) => {
+const CluePhase = ({ game, playerId, onSubmitClue, onSkipTurn }) => {
   const [clue, setClue] = useState('');
   const player = game.players.find((p) => p.id === playerId);
   const isImpostor = game.impostorIds.includes(playerId);
@@ -223,10 +235,35 @@ const CluePhase = ({ game, playerId, onSubmitClue }) => {
   // Find the next player who hasn't submitted a clue (more robust than using currentClueIndex)
   const currentPlayer = game.players.find(p => !game.clues.find(c => c.playerId === p.id));
   const isMyTurn = currentPlayer?.id === playerId;
+  const clueTime = game.settings.clueTime || 30;
+
+  // Calculate time left for current turn
+  const calculateTimeLeft = () => {
+    if (!game.turnStartTime) return clueTime;
+    const elapsed = Math.floor((Date.now() - game.turnStartTime) / 1000);
+    return Math.max(0, clueTime - elapsed);
+  };
+
+  const [timeLeft, setTimeLeft] = useState(calculateTimeLeft);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      const remaining = calculateTimeLeft();
+      setTimeLeft(remaining);
+      // Auto-skip when timer expires (current player triggers)
+      if (remaining <= 0 && isMyTurn && !myClue) {
+        onSkipTurn();
+      }
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [game.turnStartTime, isMyTurn, myClue]);
 
   return (
     <div className="flex flex-col items-center justify-center min-h-screen p-4">
       <Card className="w-full max-w-lg text-center">
+        <div className="mb-4">
+          <Timer seconds={timeLeft} label={isMyTurn ? "Your Time" : `${currentPlayer?.name}'s Time`} />
+        </div>
         <div className="mb-6">
           <div className="text-white/60 text-sm mb-2">Category: {game.settings.category}</div>
           {isImpostor ? (
@@ -558,7 +595,7 @@ export default function ImpostorGame() {
       hostId: playerId,
       players: [{ id: playerId, name: name.trim() }],
       phase: PHASES.LOBBY,
-      settings: { category: 'food', numImpostors: 1, discussionTime: 60, votingTime: 45 },
+      settings: { category: 'food', numImpostors: 1, clueTime: 30, discussionTime: 60, votingTime: 45 },
       secretWord: '',
       impostorIds: [],
       clues: [],
@@ -637,6 +674,7 @@ export default function ImpostorGame() {
       phase: PHASES.CLUE,
       clues: [],
       currentClueIndex: 0,
+      turnStartTime: Date.now(), // Start timer for first player
       votes: {},
       eliminatedId: null,
       winner: null
@@ -644,6 +682,29 @@ export default function ImpostorGame() {
     await saveGame(updated);
     setGame(updated);
     setPhase(PHASES.CLUE);
+  };
+
+  const skipTurn = async () => {
+    // Skip current player's turn (they get "(skipped)" as clue)
+    const latestGame = await loadGame(game.roomCode);
+    if (!latestGame || latestGame.phase !== PHASES.CLUE) return;
+
+    const currentPlayer = latestGame.players.find(p => !latestGame.clues.find(c => c.playerId === p.id));
+    if (!currentPlayer) return;
+
+    const updated = { ...latestGame };
+    updated.clues.push({ playerId: currentPlayer.id, clue: '(skipped)' });
+    updated.currentClueIndex = updated.clues.length;
+    updated.turnStartTime = Date.now(); // Reset timer for next player
+
+    if (updated.currentClueIndex >= updated.players.length) {
+      updated.phase = PHASES.DISCUSSION;
+      updated.phaseStartTime = Date.now();
+    }
+
+    await saveGame(updated);
+    setGame(updated);
+    setPhase(updated.phase);
   };
 
   const submitClue = async (clue) => {
@@ -664,6 +725,7 @@ export default function ImpostorGame() {
     const updated = { ...latestGame };
     updated.clues.push({ playerId, clue: clue.trim() });
     updated.currentClueIndex = updated.clues.length; // Use clues.length for accurate index
+    updated.turnStartTime = Date.now(); // Reset timer for next player
 
     if (updated.currentClueIndex >= updated.players.length) {
       updated.phase = PHASES.DISCUSSION;
@@ -766,6 +828,7 @@ export default function ImpostorGame() {
       phase: PHASES.CLUE,
       clues: [],
       currentClueIndex: 0,
+      turnStartTime: Date.now(), // Start timer for first player
       votes: {},
       eliminatedId: null,
       winner: null
@@ -803,7 +866,7 @@ export default function ImpostorGame() {
 
       {phase === PHASES.HOME && <HomeScreen onCreateGame={createGame} onJoinGame={joinGame} />}
       {phase === PHASES.LOBBY && game && <LobbyScreen game={game} playerId={playerId} onStartGame={startGame} onUpdateSettings={updateSettings} />}
-      {phase === PHASES.CLUE && game && <CluePhase game={game} playerId={playerId} onSubmitClue={submitClue} />}
+      {phase === PHASES.CLUE && game && <CluePhase game={game} playerId={playerId} onSubmitClue={submitClue} onSkipTurn={skipTurn} />}
       {phase === PHASES.DISCUSSION && game && <DiscussionPhase game={game} playerId={playerId} onEndDiscussion={endDiscussion} />}
       {phase === PHASES.VOTING && game && <VotingPhase game={game} playerId={playerId} onVote={vote} onForceEndVoting={forceEndVoting} />}
       {phase === PHASES.REVEAL && game && <RevealPhase game={game} playerId={playerId} onPlayAgain={playAgain} onBackToLobby={backToLobby} />}
