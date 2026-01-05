@@ -70,11 +70,14 @@ const Card = ({ children, className = '' }) => (
   <div className={`bg-white/10 backdrop-blur-sm rounded-2xl p-6 border border-white/10 ${className}`}>{children}</div>
 );
 
-const PlayerBadge = ({ name, isHost, isYou, isImpostor, showRole, eliminated }) => (
+const PlayerBadge = ({ name, isHost, isYou, isImpostor, showRole, eliminated, canKick, onKick }) => (
   <div className={`flex items-center gap-2 px-4 py-2 rounded-full ${eliminated ? 'bg-red-500/30 line-through' : 'bg-white/10'} ${isYou ? 'ring-2 ring-purple-400' : ''}`}>
     <span className="text-lg">{isHost ? '👑' : '👤'}</span>
     <span className="text-white font-medium">{name}{isYou ? ' (You)' : ''}</span>
     {showRole && isImpostor && <span className="text-red-400 text-xs font-bold ml-1">SPY</span>}
+    {canKick && !isYou && !isHost && (
+      <button onClick={onKick} className="ml-1 text-red-400 hover:text-red-300 text-sm font-bold">✕</button>
+    )}
   </div>
 );
 
@@ -120,7 +123,7 @@ const HomeScreen = ({ onCreateGame, onJoinGame }) => {
   );
 };
 
-const LobbyScreen = ({ game, playerId, onStartGame, onUpdateSettings }) => {
+const LobbyScreen = ({ game, playerId, onStartGame, onUpdateSettings, onKickPlayer }) => {
   const isHost = game.hostId === playerId;
   const shareUrl = `${window.location.origin}${window.location.pathname}#${game.roomCode}`;
   const [copied, setCopied] = useState(false);
@@ -146,7 +149,14 @@ const LobbyScreen = ({ game, playerId, onStartGame, onUpdateSettings }) => {
           <div className="text-white/60 text-sm mb-3">Players ({game.players.length}/20)</div>
           <div className="flex flex-wrap gap-2">
             {game.players.map((p) => (
-              <PlayerBadge key={p.id} name={p.name} isHost={p.id === game.hostId} isYou={p.id === playerId} />
+              <PlayerBadge
+                key={p.id}
+                name={p.name}
+                isHost={p.id === game.hostId}
+                isYou={p.id === playerId}
+                canKick={isHost}
+                onKick={() => onKickPlayer(p.id)}
+              />
             ))}
           </div>
         </div>
@@ -649,6 +659,18 @@ export default function ImpostorGame() {
     setGame(updated);
   };
 
+  const kickPlayer = async (kickedPlayerId) => {
+    if (game.hostId !== playerId) return; // Only host can kick
+    if (kickedPlayerId === game.hostId) return; // Can't kick yourself
+
+    const updated = {
+      ...game,
+      players: game.players.filter(p => p.id !== kickedPlayerId)
+    };
+    await saveGame(updated);
+    setGame(updated);
+  };
+
   const startGame = async () => {
     // Reload from Firebase to get the latest players list (avoids race conditions)
     const latestGame = await loadGame(game.roomCode);
@@ -865,7 +887,7 @@ export default function ImpostorGame() {
       )}
 
       {phase === PHASES.HOME && <HomeScreen onCreateGame={createGame} onJoinGame={joinGame} />}
-      {phase === PHASES.LOBBY && game && <LobbyScreen game={game} playerId={playerId} onStartGame={startGame} onUpdateSettings={updateSettings} />}
+      {phase === PHASES.LOBBY && game && <LobbyScreen game={game} playerId={playerId} onStartGame={startGame} onUpdateSettings={updateSettings} onKickPlayer={kickPlayer} />}
       {phase === PHASES.CLUE && game && <CluePhase game={game} playerId={playerId} onSubmitClue={submitClue} onSkipTurn={skipTurn} />}
       {phase === PHASES.DISCUSSION && game && <DiscussionPhase game={game} playerId={playerId} onEndDiscussion={endDiscussion} />}
       {phase === PHASES.VOTING && game && <VotingPhase game={game} playerId={playerId} onVote={vote} onForceEndVoting={forceEndVoting} />}
