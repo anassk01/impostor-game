@@ -92,17 +92,20 @@ const Card = ({ children, className = '' }) => (
   <div className={`bg-white/10 backdrop-blur-sm rounded-2xl p-6 border border-white/10 ${className}`}>{children}</div>
 );
 
-const PlayerBadge = ({ name, isHost, isYou, isImpostor, showRole, eliminated }) => (
+const PlayerBadge = ({ name, isHost, isYou, isImpostor, showRole, eliminated, canKick, onKick }) => (
   <div className={`flex items-center gap-2 px-4 py-2 rounded-full ${eliminated ? 'bg-red-500/30 line-through' : 'bg-white/10'} ${isYou ? 'ring-2 ring-purple-400' : ''}`}>
     <span className="text-lg">{isHost ? '👑' : '👤'}</span>
     <span className="text-white font-medium">{name}{isYou ? ' (You)' : ''}</span>
     {showRole && isImpostor && <span className="text-red-400 text-xs font-bold ml-1">SPY</span>}
+    {canKick && !isYou && !isHost && (
+      <button onClick={onKick} className="ml-1 text-red-400 hover:text-red-300 text-sm font-bold">✕</button>
+    )}
   </div>
 );
 
 const Timer = ({ seconds, label }) => (
   <div className="text-center">
-    <div className="text-4xl font-bold text-white">{seconds}s</div>
+    <div className={`text-4xl font-bold ${seconds <= 10 ? 'text-red-400' : 'text-white'}`}>{seconds}s</div>
     <div className="text-white/60 text-sm">{label}</div>
   </div>
 );
@@ -142,7 +145,7 @@ const HomeScreen = ({ onCreateGame, onJoinGame }) => {
   );
 };
 
-const LobbyScreen = ({ game, playerId, onStartGame, onUpdateSettings }) => {
+const LobbyScreen = ({ game, playerId, onStartGame, onUpdateSettings, onKickPlayer }) => {
   const isHost = game.hostId === playerId;
   const shareUrl = `${window.location.origin}${window.location.pathname}#${game.roomCode}`;
   const [copied, setCopied] = useState(false);
@@ -168,7 +171,14 @@ const LobbyScreen = ({ game, playerId, onStartGame, onUpdateSettings }) => {
           <div className="text-white/60 text-sm mb-3">Players ({game.players.length}/20)</div>
           <div className="flex flex-wrap gap-2">
             {game.players.map((p) => (
-              <PlayerBadge key={p.id} name={p.name} isHost={p.id === game.hostId} isYou={p.id === playerId} />
+              <PlayerBadge
+                key={p.id}
+                name={p.name}
+                isHost={p.id === game.hostId}
+                isYou={p.id === playerId}
+                canKick={isHost}
+                onKick={() => onKickPlayer(p.id)}
+              />
             ))}
           </div>
         </div>
@@ -212,6 +222,18 @@ const LobbyScreen = ({ game, playerId, onStartGame, onUpdateSettings }) => {
               />
             </div>
             <div>
+              <label className="text-white/60 text-sm block mb-2">Clue Time (per player): {game.settings.clueTime || 30}s</label>
+              <input
+                type="range"
+                min={15}
+                max={60}
+                step={5}
+                value={game.settings.clueTime || 30}
+                onChange={(e) => onUpdateSettings({ clueTime: parseInt(e.target.value) })}
+                className="w-full"
+              />
+            </div>
+            <div>
               <label className="text-white/60 text-sm block mb-2">Discussion Time: {game.settings.discussionTime || 60}s</label>
               <input
                 type="range"
@@ -222,60 +244,18 @@ const LobbyScreen = ({ game, playerId, onStartGame, onUpdateSettings }) => {
                 onChange={(e) => onUpdateSettings({ discussionTime: parseInt(e.target.value) })}
                 className="w-full"
               />
-              <div className="flex justify-between text-xs text-white/40 mt-1">
-                <span>30s</span>
-                <span>60s</span>
-                <span>90s</span>
-                <span>120s</span>
-                <span>180s</span>
-              </div>
             </div>
             <div>
-              <label className="text-white/60 text-sm block mb-2">Clue Time Limit: {game.settings.clueTimeLimit === 0 ? 'Unlimited' : `${game.settings.clueTimeLimit}s`}</label>
+              <label className="text-white/60 text-sm block mb-2">Voting Time: {game.settings.votingTime || 45}s</label>
               <input
                 type="range"
-                min={0}
-                max={60}
+                min={20}
+                max={120}
                 step={10}
-                value={game.settings.clueTimeLimit || 0}
-                onChange={(e) => onUpdateSettings({ clueTimeLimit: parseInt(e.target.value) })}
+                value={game.settings.votingTime || 45}
+                onChange={(e) => onUpdateSettings({ votingTime: parseInt(e.target.value) })}
                 className="w-full"
               />
-              <div className="flex justify-between text-xs text-white/40 mt-1">
-                <span>None</span>
-                <span>30s</span>
-                <span>60s</span>
-              </div>
-            </div>
-            <div className="flex items-center justify-between">
-              <label className="text-white/60 text-sm">Show Timer</label>
-              <button
-                onClick={() => onUpdateSettings({ showTimer: !game.settings.showTimer })}
-                className={`relative inline-flex h-6 w-11 items-center rounded-full transition ${
-                  game.settings.showTimer ? 'bg-purple-500' : 'bg-white/20'
-                }`}
-              >
-                <span
-                  className={`inline-block h-4 w-4 transform rounded-full bg-white transition ${
-                    game.settings.showTimer ? 'translate-x-6' : 'translate-x-1'
-                  }`}
-                />
-              </button>
-            </div>
-            <div className="flex items-center justify-between">
-              <label className="text-white/60 text-sm">Auto-End Discussion</label>
-              <button
-                onClick={() => onUpdateSettings({ autoEndDiscussion: !game.settings.autoEndDiscussion })}
-                className={`relative inline-flex h-6 w-11 items-center rounded-full transition ${
-                  game.settings.autoEndDiscussion ? 'bg-purple-500' : 'bg-white/20'
-                }`}
-              >
-                <span
-                  className={`inline-block h-4 w-4 transform rounded-full bg-white transition ${
-                    game.settings.autoEndDiscussion ? 'translate-x-6' : 'translate-x-1'
-                  }`}
-                />
-              </button>
             </div>
           </div>
         )}
@@ -292,19 +272,43 @@ const LobbyScreen = ({ game, playerId, onStartGame, onUpdateSettings }) => {
   );
 };
 
-const CluePhase = ({ game, playerId, onSubmitClue }) => {
+const CluePhase = ({ game, playerId, onSubmitClue, onSkipTurn }) => {
   const [clue, setClue] = useState('');
-  const player = game.players.find((p) => p.id === playerId);
   const isImpostor = game.impostorIds.includes(playerId);
-  const currentPlayer = game.players[game.currentClueIndex];
-  const isMyTurn = currentPlayer?.id === playerId;
   const myClue = game.clues.find((c) => c.playerId === playerId);
+  // Find next player who hasn't submitted
+  const currentPlayer = game.players.find(p => !game.clues.find(c => c.playerId === p.id));
+  const isMyTurn = currentPlayer?.id === playerId;
+  const clueTime = game.settings.clueTime || 30;
+
+  // Synced timer based on turnStartTime
+  const calculateTimeLeft = () => {
+    if (!game.turnStartTime) return clueTime;
+    const elapsed = Math.floor((Date.now() - game.turnStartTime) / 1000);
+    return Math.max(0, clueTime - elapsed);
+  };
+
+  const [timeLeft, setTimeLeft] = useState(calculateTimeLeft);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      const remaining = calculateTimeLeft();
+      setTimeLeft(remaining);
+      if (remaining <= 0 && isMyTurn && !myClue) {
+        onSkipTurn();
+      }
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [game.turnStartTime, isMyTurn, myClue]);
 
   return (
     <div className="flex flex-col items-center justify-center min-h-screen p-4">
       <Card className="w-full max-w-lg text-center">
+        <div className="mb-4">
+          <Timer seconds={timeLeft} label={isMyTurn ? "Your Time" : `${currentPlayer?.name}'s Time`} />
+        </div>
         <div className="mb-6">
-          <div className="text-white/60 text-sm mb-2">Category: {game.settings.category}</div>
+          <div className="text-white/60 text-sm mb-2">Category: {CATEGORY_NAMES[game.settings.language || 'en'][game.settings.category]}</div>
           {isImpostor ? (
             <div className="py-6 px-4 rounded-xl bg-red-500/20 border border-red-500/30">
               <div className="text-red-400 font-bold text-lg mb-1">🕵️ YOU ARE THE IMPOSTOR</div>
@@ -321,9 +325,9 @@ const CluePhase = ({ game, playerId, onSubmitClue }) => {
         <div className="mb-6">
           <div className="text-white/60 text-sm mb-2">Turn Order</div>
           <div className="flex flex-wrap justify-center gap-2">
-            {game.players.map((p, i) => {
+            {game.players.map((p) => {
               const hasClue = game.clues.find((c) => c.playerId === p.id);
-              const isCurrent = i === game.currentClueIndex;
+              const isCurrent = currentPlayer?.id === p.id;
               return (
                 <div key={p.id} className={`px-3 py-1 rounded-full text-sm ${isCurrent ? 'bg-purple-500 text-white' : hasClue ? 'bg-green-500/30 text-green-300' : 'bg-white/10 text-white/50'}`}>
                   {p.name}{p.id === playerId ? ' (You)' : ''}
@@ -367,29 +371,36 @@ const CluePhase = ({ game, playerId, onSubmitClue }) => {
 };
 
 const DiscussionPhase = ({ game, playerId, onEndDiscussion }) => {
-  const [timeLeft, setTimeLeft] = useState(game.settings.discussionTime || 60);
   const isHost = game.hostId === playerId;
   const isImpostor = game.impostorIds.includes(playerId);
+  const discussionTime = game.settings.discussionTime || 60;
+
+  // Synced timer based on phaseStartTime
+  const calculateTimeLeft = () => {
+    if (!game.phaseStartTime) return discussionTime;
+    const elapsed = Math.floor((Date.now() - game.phaseStartTime) / 1000);
+    return Math.max(0, discussionTime - elapsed);
+  };
+
+  const [timeLeft, setTimeLeft] = useState(calculateTimeLeft);
 
   useEffect(() => {
-    const timer = setInterval(() => setTimeLeft((t) => Math.max(0, t - 1)), 1000);
+    const timer = setInterval(() => {
+      const remaining = calculateTimeLeft();
+      setTimeLeft(remaining);
+      if (remaining <= 0 && isHost) {
+        onEndDiscussion();
+      }
+    }, 1000);
     return () => clearInterval(timer);
-  }, []);
-
-  useEffect(() => {
-    if (timeLeft === 0 && game.settings.autoEndDiscussion && isHost) {
-      onEndDiscussion();
-    }
-  }, [timeLeft, game.settings.autoEndDiscussion, isHost, onEndDiscussion]);
+  }, [game.phaseStartTime, isHost]);
 
   return (
     <div className="flex flex-col items-center justify-center min-h-screen p-4">
       <Card className="w-full max-w-lg text-center">
-        {game.settings.showTimer && (
-          <div className="mb-6">
-            <Timer seconds={timeLeft} label="Discussion Time" />
-          </div>
-        )}
+        <div className="mb-6">
+          <Timer seconds={timeLeft} label="Discussion Time" />
+        </div>
 
         <div className="text-2xl font-bold text-white mb-2">🗣️ Discuss!</div>
         <p className="text-white/60 mb-6">Who seems suspicious? Talk it out!</p>
@@ -423,15 +434,40 @@ const DiscussionPhase = ({ game, playerId, onEndDiscussion }) => {
   );
 };
 
-const VotingPhase = ({ game, playerId, onVote }) => {
+const VotingPhase = ({ game, playerId, onVote, onForceEndVoting }) => {
   const [selectedId, setSelectedId] = useState(null);
   const hasVoted = game.votes[playerId];
   const voteCount = Object.keys(game.votes).length;
   const totalPlayers = game.players.length;
+  const isHost = game.hostId === playerId;
+  const votingTime = game.settings.votingTime || 45;
+
+  // Synced timer based on phaseStartTime
+  const calculateTimeLeft = () => {
+    if (!game.phaseStartTime) return votingTime;
+    const elapsed = Math.floor((Date.now() - game.phaseStartTime) / 1000);
+    return Math.max(0, votingTime - elapsed);
+  };
+
+  const [timeLeft, setTimeLeft] = useState(calculateTimeLeft);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      const remaining = calculateTimeLeft();
+      setTimeLeft(remaining);
+      if (remaining <= 0 && isHost && voteCount > 0) {
+        onForceEndVoting();
+      }
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [game.phaseStartTime, isHost, voteCount]);
 
   return (
     <div className="flex flex-col items-center justify-center min-h-screen p-4">
       <Card className="w-full max-w-lg text-center">
+        <div className="mb-4">
+          <Timer seconds={timeLeft} label="Voting Time" />
+        </div>
         <div className="text-2xl font-bold text-white mb-2">🗳️ Vote!</div>
         <p className="text-white/60 mb-6">Who is the impostor?</p>
         <div className="text-white/40 text-sm mb-4">Votes: {voteCount}/{totalPlayers}</div>
@@ -560,26 +596,37 @@ export default function ImpostorGame() {
   });
   const [error, setError] = useState('');
   const pollingRef = useRef(null);
+  const gameRef = useRef(null);
+
+  // Keep gameRef in sync
+  useEffect(() => {
+    gameRef.current = game;
+  }, [game]);
 
   useEffect(() => {
     sessionStorage.setItem('impostorPlayerId', playerId);
   }, [playerId]);
 
-  // Polling for game updates
+  // Polling with ref to avoid stale closure
   useEffect(() => {
     if (!game?.roomCode) return;
 
+    const roomCode = game.roomCode;
+
     const poll = async () => {
-      const latest = await loadGame(game.roomCode);
-      if (latest && JSON.stringify(latest) !== JSON.stringify(game)) {
+      const latest = await loadGame(roomCode);
+      if (!latest) return;
+
+      const currentGame = gameRef.current;
+      if (JSON.stringify(latest) !== JSON.stringify(currentGame)) {
         setGame(latest);
         setPhase(latest.phase);
       }
     };
 
-    pollingRef.current = setInterval(poll, 1500);
+    pollingRef.current = setInterval(poll, 1000);
     return () => clearInterval(pollingRef.current);
-  }, [game]);
+  }, [game?.roomCode]);
 
   const createGame = async (name) => {
     const roomCode = generateRoomCode();
@@ -592,15 +639,16 @@ export default function ImpostorGame() {
         category: 'food',
         numImpostors: 1,
         language: 'en',
+        clueTime: 30,
         discussionTime: 60,
-        clueTimeLimit: 0,
-        showTimer: true,
-        autoEndDiscussion: false
+        votingTime: 45
       },
       secretWord: '',
       impostorIds: [],
       clues: [],
       currentClueIndex: 0,
+      turnStartTime: null,
+      phaseStartTime: null,
       votes: {},
       eliminatedId: null,
       winner: null,
@@ -650,27 +698,42 @@ export default function ImpostorGame() {
     setGame(updated);
   };
 
-  const startGame = async () => {
-    // Shuffle players for turn order
-    const shuffledPlayers = shuffleArray(game.players);
-
-    // Randomly select impostors (NOT the first players in the array)
-    const impostorCount = Math.min(game.settings.numImpostors, Math.floor(shuffledPlayers.length / 3));
-    const allPlayerIds = shuffledPlayers.map(p => p.id);
-    const shuffledIds = shuffleArray(allPlayerIds);
-    const impostorIds = shuffledIds.slice(0, impostorCount);
-
-    const language = game.settings.language || 'en';
-    const secretWord = pickRandom(WORD_CATEGORIES[language][game.settings.category]);
+  const kickPlayer = async (kickedPlayerId) => {
+    if (game.hostId !== playerId) return;
+    if (kickedPlayerId === game.hostId) return;
 
     const updated = {
       ...game,
+      players: game.players.filter(p => p.id !== kickedPlayerId)
+    };
+    await saveGame(updated);
+    setGame(updated);
+  };
+
+  const startGame = async () => {
+    const latestGame = await loadGame(game.roomCode);
+    if (!latestGame) {
+      setError('Failed to load game');
+      return;
+    }
+
+    const impostorCount = Math.min(latestGame.settings.numImpostors, Math.floor(latestGame.players.length / 3));
+    const shuffledForImpostors = shuffleArray(latestGame.players);
+    const impostorIds = shuffledForImpostors.slice(0, impostorCount).map((p) => p.id);
+
+    const shuffledPlayers = shuffleArray(latestGame.players);
+    const language = latestGame.settings.language || 'en';
+    const secretWord = pickRandom(WORD_CATEGORIES[language][latestGame.settings.category]);
+
+    const updated = {
+      ...latestGame,
       players: shuffledPlayers,
       impostorIds,
       secretWord,
       phase: PHASES.CLUE,
       clues: [],
       currentClueIndex: 0,
+      turnStartTime: Date.now(),
       votes: {},
       eliminatedId: null,
       winner: null
@@ -680,13 +743,49 @@ export default function ImpostorGame() {
     setPhase(PHASES.CLUE);
   };
 
-  const submitClue = async (clue) => {
-    const updated = { ...game };
-    updated.clues.push({ playerId, clue: clue.trim() });
-    updated.currentClueIndex++;
+  const skipTurn = async () => {
+    const latestGame = await loadGame(game.roomCode);
+    if (!latestGame || latestGame.phase !== PHASES.CLUE) return;
+
+    const currentPlayer = latestGame.players.find(p => !latestGame.clues.find(c => c.playerId === p.id));
+    if (!currentPlayer) return;
+
+    const updated = { ...latestGame };
+    updated.clues.push({ playerId: currentPlayer.id, clue: '(skipped)' });
+    updated.currentClueIndex = updated.clues.length;
+    updated.turnStartTime = Date.now();
 
     if (updated.currentClueIndex >= updated.players.length) {
       updated.phase = PHASES.DISCUSSION;
+      updated.phaseStartTime = Date.now();
+    }
+
+    await saveGame(updated);
+    setGame(updated);
+    setPhase(updated.phase);
+  };
+
+  const submitClue = async (clue) => {
+    const latestGame = await loadGame(game.roomCode);
+    if (!latestGame) {
+      setError('Failed to submit clue');
+      return;
+    }
+
+    if (latestGame.clues.find(c => c.playerId === playerId)) {
+      setGame(latestGame);
+      setPhase(latestGame.phase);
+      return;
+    }
+
+    const updated = { ...latestGame };
+    updated.clues.push({ playerId, clue: clue.trim() });
+    updated.currentClueIndex = updated.clues.length;
+    updated.turnStartTime = Date.now();
+
+    if (updated.currentClueIndex >= updated.players.length) {
+      updated.phase = PHASES.DISCUSSION;
+      updated.phaseStartTime = Date.now();
     }
 
     await saveGame(updated);
@@ -695,18 +794,51 @@ export default function ImpostorGame() {
   };
 
   const endDiscussion = async () => {
-    const updated = { ...game, phase: PHASES.VOTING };
+    const updated = { ...game, phase: PHASES.VOTING, phaseStartTime: Date.now() };
     await saveGame(updated);
     setGame(updated);
     setPhase(PHASES.VOTING);
   };
 
+  const forceEndVoting = async () => {
+    const latestGame = await loadGame(game.roomCode);
+    if (!latestGame || latestGame.phase !== PHASES.VOTING) return;
+
+    const votes = latestGame.votes;
+    if (Object.keys(votes).length === 0) return;
+
+    const tally = {};
+    Object.values(votes).forEach((v) => { tally[v] = (tally[v] || 0) + 1; });
+    const maxVotes = Math.max(...Object.values(tally));
+    const eliminated = Object.entries(tally).find(([id, count]) => count === maxVotes)?.[0];
+
+    const updated = { ...latestGame };
+    updated.eliminatedId = eliminated;
+    updated.winner = updated.impostorIds.includes(eliminated) ? 'crew' : 'impostor';
+    updated.phase = PHASES.REVEAL;
+
+    await saveGame(updated);
+    setGame(updated);
+    setPhase(PHASES.REVEAL);
+  };
+
   const vote = async (votedForId) => {
-    const updated = { ...game };
+    const latestGame = await loadGame(game.roomCode);
+    if (!latestGame) {
+      setError('Failed to submit vote');
+      return;
+    }
+
+    if (latestGame.votes[playerId]) {
+      setGame(latestGame);
+      setPhase(latestGame.phase);
+      return;
+    }
+
+    const updated = { ...latestGame };
     updated.votes[playerId] = votedForId;
 
     if (Object.keys(updated.votes).length >= updated.players.length) {
-      // Tally votes
       const tally = {};
       Object.values(updated.votes).forEach((v) => { tally[v] = (tally[v] || 0) + 1; });
       const maxVotes = Math.max(...Object.values(tally));
@@ -723,26 +855,29 @@ export default function ImpostorGame() {
   };
 
   const playAgain = async () => {
-    // Shuffle players for turn order
-    const shuffledPlayers = shuffleArray(game.players);
+    const latestGame = await loadGame(game.roomCode);
+    if (!latestGame) {
+      setError('Failed to load game');
+      return;
+    }
 
-    // Randomly select impostors (NOT the first players in the array)
-    const impostorCount = Math.min(game.settings.numImpostors, Math.floor(shuffledPlayers.length / 3));
-    const allPlayerIds = shuffledPlayers.map(p => p.id);
-    const shuffledIds = shuffleArray(allPlayerIds);
-    const impostorIds = shuffledIds.slice(0, impostorCount);
+    const impostorCount = Math.min(latestGame.settings.numImpostors, Math.floor(latestGame.players.length / 3));
+    const shuffledForImpostors = shuffleArray(latestGame.players);
+    const impostorIds = shuffledForImpostors.slice(0, impostorCount).map((p) => p.id);
 
-    const language = game.settings.language || 'en';
-    const secretWord = pickRandom(WORD_CATEGORIES[language][game.settings.category]);
+    const shuffledPlayers = shuffleArray(latestGame.players);
+    const language = latestGame.settings.language || 'en';
+    const secretWord = pickRandom(WORD_CATEGORIES[language][latestGame.settings.category]);
 
     const updated = {
-      ...game,
+      ...latestGame,
       players: shuffledPlayers,
       impostorIds,
       secretWord,
       phase: PHASES.CLUE,
       clues: [],
       currentClueIndex: 0,
+      turnStartTime: Date.now(),
       votes: {},
       eliminatedId: null,
       winner: null
@@ -760,6 +895,8 @@ export default function ImpostorGame() {
       impostorIds: [],
       clues: [],
       currentClueIndex: 0,
+      turnStartTime: null,
+      phaseStartTime: null,
       votes: {},
       eliminatedId: null,
       winner: null
@@ -779,10 +916,10 @@ export default function ImpostorGame() {
       )}
 
       {phase === PHASES.HOME && <HomeScreen onCreateGame={createGame} onJoinGame={joinGame} />}
-      {phase === PHASES.LOBBY && game && <LobbyScreen game={game} playerId={playerId} onStartGame={startGame} onUpdateSettings={updateSettings} />}
-      {phase === PHASES.CLUE && game && <CluePhase game={game} playerId={playerId} onSubmitClue={submitClue} />}
+      {phase === PHASES.LOBBY && game && <LobbyScreen game={game} playerId={playerId} onStartGame={startGame} onUpdateSettings={updateSettings} onKickPlayer={kickPlayer} />}
+      {phase === PHASES.CLUE && game && <CluePhase game={game} playerId={playerId} onSubmitClue={submitClue} onSkipTurn={skipTurn} />}
       {phase === PHASES.DISCUSSION && game && <DiscussionPhase game={game} playerId={playerId} onEndDiscussion={endDiscussion} />}
-      {phase === PHASES.VOTING && game && <VotingPhase game={game} playerId={playerId} onVote={vote} />}
+      {phase === PHASES.VOTING && game && <VotingPhase game={game} playerId={playerId} onVote={vote} onForceEndVoting={forceEndVoting} />}
       {phase === PHASES.REVEAL && game && <RevealPhase game={game} playerId={playerId} onPlayAgain={playAgain} onBackToLobby={backToLobby} />}
     </div>
   );
