@@ -272,7 +272,8 @@ const LobbyScreen = ({ game, playerId, onStartGame, onUpdateSettings, onKickPlay
   );
 };
 
-const CluePhase = ({ game, playerId, onSubmitClue, onSkipTurn }) => {
+const CluePhase = ({ game, playerId, onSubmitClue, onSkipTurn, onKickPlayer }) => {
+  const isHost = game.hostId === playerId;
   const [clue, setClue] = useState('');
   const isImpostor = game.impostorIds.includes(playerId);
   const myClue = game.clues.find((c) => c.playerId === playerId);
@@ -365,12 +366,29 @@ const CluePhase = ({ game, playerId, onSubmitClue, onSkipTurn }) => {
             </div>
           </div>
         )}
+
+        {isHost && (
+          <div className="mt-6 pt-6 border-t border-white/10">
+            <div className="text-white/60 text-sm mb-3">Kick Player</div>
+            <div className="flex flex-wrap justify-center gap-2">
+              {game.players.filter(p => p.id !== playerId).map((p) => (
+                <button
+                  key={p.id}
+                  onClick={() => onKickPlayer(p.id)}
+                  className="px-3 py-1 rounded-full bg-red-500/20 text-red-300 text-sm hover:bg-red-500/30 transition"
+                >
+                  Kick {p.name}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
       </Card>
     </div>
   );
 };
 
-const DiscussionPhase = ({ game, playerId, onEndDiscussion }) => {
+const DiscussionPhase = ({ game, playerId, onEndDiscussion, onKickPlayer }) => {
   const isHost = game.hostId === playerId;
   const isImpostor = game.impostorIds.includes(playerId);
   const discussionTime = game.settings.discussionTime || 60;
@@ -429,12 +447,29 @@ const DiscussionPhase = ({ game, playerId, onEndDiscussion }) => {
         {isHost && (
           <Button onClick={onEndDiscussion} className="w-full">End Discussion → Vote</Button>
         )}
+
+        {isHost && (
+          <div className="mt-6 pt-6 border-t border-white/10">
+            <div className="text-white/60 text-sm mb-3">Kick Player</div>
+            <div className="flex flex-wrap justify-center gap-2">
+              {game.players.filter(p => p.id !== playerId).map((p) => (
+                <button
+                  key={p.id}
+                  onClick={() => onKickPlayer(p.id)}
+                  className="px-3 py-1 rounded-full bg-red-500/20 text-red-300 text-sm hover:bg-red-500/30 transition"
+                >
+                  Kick {p.name}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
       </Card>
     </div>
   );
 };
 
-const VotingPhase = ({ game, playerId, onVote, onForceEndVoting }) => {
+const VotingPhase = ({ game, playerId, onVote, onForceEndVoting, onKickPlayer }) => {
   const [selectedId, setSelectedId] = useState(null);
   const hasVoted = game.votes[playerId];
   const voteCount = Object.keys(game.votes).length;
@@ -513,6 +548,23 @@ const VotingPhase = ({ game, playerId, onVote, onForceEndVoting }) => {
             })}
           </div>
         </div>
+
+        {isHost && (
+          <div className="mt-6 pt-6 border-t border-white/10">
+            <div className="text-white/60 text-sm mb-3">Kick Player</div>
+            <div className="flex flex-wrap justify-center gap-2">
+              {game.players.filter(p => p.id !== playerId).map((p) => (
+                <button
+                  key={p.id}
+                  onClick={() => onKickPlayer(p.id)}
+                  className="px-3 py-1 rounded-full bg-red-500/20 text-red-300 text-sm hover:bg-red-500/30 transition"
+                >
+                  Kick {p.name}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
       </Card>
     </div>
   );
@@ -917,9 +969,9 @@ export default function ImpostorGame() {
 
       {phase === PHASES.HOME && <HomeScreen onCreateGame={createGame} onJoinGame={joinGame} />}
       {phase === PHASES.LOBBY && game && <LobbyScreen game={game} playerId={playerId} onStartGame={startGame} onUpdateSettings={updateSettings} onKickPlayer={kickPlayer} />}
-      {phase === PHASES.CLUE && game && <CluePhase game={game} playerId={playerId} onSubmitClue={submitClue} onSkipTurn={skipTurn} />}
-      {phase === PHASES.DISCUSSION && game && <DiscussionPhase game={game} playerId={playerId} onEndDiscussion={endDiscussion} />}
-      {phase === PHASES.VOTING && game && <VotingPhase game={game} playerId={playerId} onVote={vote} onForceEndVoting={forceEndVoting} />}
+      {phase === PHASES.CLUE && game && <CluePhase game={game} playerId={playerId} onSubmitClue={submitClue} onSkipTurn={skipTurn} onKickPlayer={kickPlayer} />}
+      {phase === PHASES.DISCUSSION && game && <DiscussionPhase game={game} playerId={playerId} onEndDiscussion={endDiscussion} onKickPlayer={kickPlayer} />}
+      {phase === PHASES.VOTING && game && <VotingPhase game={game} playerId={playerId} onVote={vote} onForceEndVoting={forceEndVoting} onKickPlayer={kickPlayer} />}
       {phase === PHASES.REVEAL && game && <RevealPhase game={game} playerId={playerId} onPlayAgain={playAgain} onBackToLobby={backToLobby} />}
     </div>
   );
