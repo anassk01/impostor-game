@@ -35,7 +35,14 @@ const PHASES = { HOME: 'home', LOBBY: 'lobby', CLUE: 'clue', DISCUSSION: 'discus
 const generateId = () => Math.random().toString(36).substring(2, 10);
 const generateRoomCode = () => Math.random().toString(36).substring(2, 6).toUpperCase();
 const pickRandom = (arr) => arr[Math.floor(Math.random() * arr.length)];
-const shuffleArray = (arr) => [...arr].sort(() => Math.random() - 0.5);
+const shuffleArray = (arr) => {
+  const shuffled = [...arr];
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
+  return shuffled;
+};
 
 // ============================================
 // STORAGE HELPERS
