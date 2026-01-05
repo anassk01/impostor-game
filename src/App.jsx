@@ -27,7 +27,18 @@ const CATEGORY_NAMES = {
   ar: { food: 'طعام', animals: 'حيوانات', movies: 'أفلام', places: 'أماكن', sports: 'رياضة', objects: 'أشياء' }
 };
 
-const PHASES = { HOME: 'home', LOBBY: 'lobby', CLUE: 'clue', DISCUSSION: 'discussion', VOTING: 'voting', REVEAL: 'reveal' };
+const PHASES = { HOME: 'home', LOBBY: 'lobby', CLUE: 'clue', DISCUSSION: 'discussion', VOTING: 'voting', ROUND_RESULT: 'round_result', REVEAL: 'reveal' };
+
+// Helper to check win conditions
+const checkWinCondition = (players, impostorIds, eliminatedIds = []) => {
+  const alivePlayers = players.filter(p => !eliminatedIds.includes(p.id));
+  const aliveImpostors = alivePlayers.filter(p => impostorIds.includes(p.id));
+  const aliveCrew = alivePlayers.filter(p => !impostorIds.includes(p.id));
+
+  if (aliveImpostors.length === 0) return 'crew'; // All impostors eliminated
+  if (aliveImpostors.length >= aliveCrew.length) return 'impostor'; // Impostors outnumber or equal crew
+  return null; // Game continues
+};
 
 // ============================================
 // UTILITY FUNCTIONS
@@ -276,10 +287,13 @@ const CluePhase = ({ game, playerId, onSubmitClue, onSkipTurn, onKickPlayer }) =
   const isHost = game.hostId === playerId;
   const [clue, setClue] = useState('');
   const isImpostor = game.impostorIds.includes(playerId);
+  const eliminatedIds = game.eliminatedIds || [];
+  const isEliminated = eliminatedIds.includes(playerId);
+  const alivePlayers = game.players.filter(p => !eliminatedIds.includes(p.id));
   const myClue = game.clues.find((c) => c.playerId === playerId);
-  // Find next player who hasn't submitted
-  const currentPlayer = game.players.find(p => !game.clues.find(c => c.playerId === p.id));
-  const isMyTurn = currentPlayer?.id === playerId;
+  // Find next alive player who hasn't submitted
+  const currentPlayer = alivePlayers.find(p => !game.clues.find(c => c.playerId === p.id));
+  const isMyTurn = currentPlayer?.id === playerId && !isEliminated;
   const clueTime = game.settings.clueTime || 30;
 
   // Synced timer based on turnStartTime
@@ -305,6 +319,14 @@ const CluePhase = ({ game, playerId, onSubmitClue, onSkipTurn, onKickPlayer }) =
   return (
     <div className="flex flex-col items-center justify-center min-h-screen p-4">
       <Card className="w-full max-w-lg text-center">
+        {game.round > 1 && (
+          <div className="mb-4 text-purple-300 font-bold">Round {game.round}</div>
+        )}
+        {isEliminated && (
+          <div className="mb-4 py-2 px-4 rounded-xl bg-red-500/20 border border-red-500/30 text-red-300">
+            You were eliminated. Watch the remaining players.
+          </div>
+        )}
         <div className="mb-4">
           <Timer seconds={timeLeft} label={isMyTurn ? "Your Time" : `${currentPlayer?.name}'s Time`} />
         </div>
@@ -329,9 +351,15 @@ const CluePhase = ({ game, playerId, onSubmitClue, onSkipTurn, onKickPlayer }) =
             {game.players.map((p) => {
               const hasClue = game.clues.find((c) => c.playerId === p.id);
               const isCurrent = currentPlayer?.id === p.id;
+              const isPlayerEliminated = eliminatedIds.includes(p.id);
               return (
-                <div key={p.id} className={`px-3 py-1 rounded-full text-sm ${isCurrent ? 'bg-purple-500 text-white' : hasClue ? 'bg-green-500/30 text-green-300' : 'bg-white/10 text-white/50'}`}>
-                  {p.name}{p.id === playerId ? ' (You)' : ''}
+                <div key={p.id} className={`px-3 py-1 rounded-full text-sm ${
+                  isPlayerEliminated ? 'bg-red-500/30 text-red-300 line-through' :
+                  isCurrent ? 'bg-purple-500 text-white' :
+                  hasClue ? 'bg-green-500/30 text-green-300' :
+                  'bg-white/10 text-white/50'
+                }`}>
+                  {p.name}{p.id === playerId ? ' (You)' : ''}{isPlayerEliminated ? ' ☠️' : ''}
                 </div>
               );
             })}
@@ -471,9 +499,12 @@ const DiscussionPhase = ({ game, playerId, onEndDiscussion, onKickPlayer }) => {
 
 const VotingPhase = ({ game, playerId, onVote, onForceEndVoting, onKickPlayer }) => {
   const [selectedId, setSelectedId] = useState(null);
+  const eliminatedIds = game.eliminatedIds || [];
+  const isEliminated = eliminatedIds.includes(playerId);
+  const alivePlayers = game.players.filter(p => !eliminatedIds.includes(p.id));
   const hasVoted = game.votes[playerId];
   const voteCount = Object.keys(game.votes).length;
-  const totalPlayers = game.players.length;
+  const totalVoters = alivePlayers.length; // Only alive players vote
   const isHost = game.hostId === playerId;
   const votingTime = game.settings.votingTime || 45;
 
@@ -500,16 +531,24 @@ const VotingPhase = ({ game, playerId, onVote, onForceEndVoting, onKickPlayer })
   return (
     <div className="flex flex-col items-center justify-center min-h-screen p-4">
       <Card className="w-full max-w-lg text-center">
+        {game.round > 1 && (
+          <div className="mb-4 text-purple-300 font-bold">Round {game.round}</div>
+        )}
+        {isEliminated && (
+          <div className="mb-4 py-2 px-4 rounded-xl bg-red-500/20 border border-red-500/30 text-red-300">
+            You were eliminated. Watch the vote.
+          </div>
+        )}
         <div className="mb-4">
           <Timer seconds={timeLeft} label="Voting Time" />
         </div>
         <div className="text-2xl font-bold text-white mb-2">🗳️ Vote!</div>
         <p className="text-white/60 mb-6">Who is the impostor?</p>
-        <div className="text-white/40 text-sm mb-4">Votes: {voteCount}/{totalPlayers}</div>
+        <div className="text-white/40 text-sm mb-4">Votes: {voteCount}/{totalVoters}</div>
 
-        {!hasVoted ? (
+        {!hasVoted && !isEliminated ? (
           <div className="space-y-3 mb-6">
-            {game.players.map((p) => (
+            {alivePlayers.map((p) => (
               <button
                 key={p.id}
                 onClick={() => setSelectedId(p.id)}
@@ -570,9 +609,58 @@ const VotingPhase = ({ game, playerId, onVote, onForceEndVoting, onKickPlayer })
   );
 };
 
+const RoundResultPhase = ({ game, playerId, onNextRound }) => {
+  const isHost = game.hostId === playerId;
+  const lastEliminated = game.lastEliminatedId;
+  const eliminatedPlayer = game.players.find(p => p.id === lastEliminated);
+  const wasImpostor = game.impostorIds.includes(lastEliminated);
+  const eliminatedIds = game.eliminatedIds || [];
+  const remainingImpostors = game.impostorIds.filter(id => !eliminatedIds.includes(id)).length;
+  const totalImpostors = game.impostorIds.length;
+
+  return (
+    <div className="flex flex-col items-center justify-center min-h-screen p-4">
+      <Card className="w-full max-w-lg text-center">
+        <div className="text-purple-300 font-bold mb-4">Round {game.round} Result</div>
+
+        <div className="text-4xl mb-4">{wasImpostor ? '🎯' : '😱'}</div>
+
+        <div className="text-2xl font-bold text-white mb-2">
+          {eliminatedPlayer?.name} was eliminated!
+        </div>
+
+        <div className={`py-4 px-6 rounded-xl mb-6 ${wasImpostor ? 'bg-green-500/20' : 'bg-red-500/20'}`}>
+          <div className={`text-lg font-bold ${wasImpostor ? 'text-green-300' : 'text-red-300'}`}>
+            {wasImpostor ? '✓ They were an IMPOSTOR!' : '✗ They were INNOCENT!'}
+          </div>
+        </div>
+
+        <div className="text-white/60 mb-6">
+          {remainingImpostors > 0 ? (
+            <>Impostors remaining: <span className="text-red-400 font-bold">{remainingImpostors}/{totalImpostors}</span></>
+          ) : (
+            <span className="text-green-400">All impostors found!</span>
+          )}
+        </div>
+
+        {isHost && (
+          <Button onClick={onNextRound} className="w-full">
+            {remainingImpostors > 0 ? 'Start Next Round' : 'See Final Results'}
+          </Button>
+        )}
+
+        {!isHost && (
+          <div className="text-white/60">Waiting for host to continue...</div>
+        )}
+      </Card>
+    </div>
+  );
+};
+
 const RevealPhase = ({ game, playerId, onPlayAgain, onBackToLobby }) => {
   const isHost = game.hostId === playerId;
-  const eliminated = game.players.find((p) => p.id === game.eliminatedId);
+  const eliminatedIds = game.eliminatedIds || [];
+  const eliminatedPlayers = game.players.filter((p) => eliminatedIds.includes(p.id));
   const impostors = game.players.filter((p) => game.impostorIds.includes(p.id));
   const crewWon = game.winner === 'crew';
 
@@ -600,11 +688,15 @@ const RevealPhase = ({ game, playerId, onPlayAgain, onBackToLobby }) => {
           </div>
         </div>
 
-        {eliminated && (
+        {eliminatedPlayers.length > 0 && (
           <div className="mb-6">
-            <div className="text-white/60 text-sm mb-2">Eliminated:</div>
-            <div className={`px-4 py-2 rounded-full inline-block ${game.impostorIds.includes(eliminated.id) ? 'bg-green-500/30 text-green-300' : 'bg-red-500/30 text-red-300'}`}>
-              {eliminated.name} {game.impostorIds.includes(eliminated.id) ? '✓ Correct!' : '✗ Innocent!'}
+            <div className="text-white/60 text-sm mb-2">Eliminated ({eliminatedPlayers.length}):</div>
+            <div className="flex flex-wrap justify-center gap-2">
+              {eliminatedPlayers.map((p) => (
+                <div key={p.id} className={`px-4 py-2 rounded-full ${game.impostorIds.includes(p.id) ? 'bg-green-500/30 text-green-300' : 'bg-red-500/30 text-red-300'}`}>
+                  {p.name} {game.impostorIds.includes(p.id) ? '✓' : '✗'}
+                </div>
+              ))}
             </div>
           </div>
         )}
@@ -787,7 +879,9 @@ export default function ImpostorGame() {
       currentClueIndex: 0,
       turnStartTime: Date.now(),
       votes: {},
-      eliminatedId: null,
+      eliminatedIds: [],
+      lastEliminatedId: null,
+      round: 1,
       winner: null
     };
     await saveGame(updated);
@@ -799,7 +893,9 @@ export default function ImpostorGame() {
     const latestGame = await loadGame(game.roomCode);
     if (!latestGame || latestGame.phase !== PHASES.CLUE) return;
 
-    const currentPlayer = latestGame.players.find(p => !latestGame.clues.find(c => c.playerId === p.id));
+    const eliminatedIds = latestGame.eliminatedIds || [];
+    const alivePlayers = latestGame.players.filter(p => !eliminatedIds.includes(p.id));
+    const currentPlayer = alivePlayers.find(p => !latestGame.clues.find(c => c.playerId === p.id));
     if (!currentPlayer) return;
 
     const updated = { ...latestGame };
@@ -807,7 +903,8 @@ export default function ImpostorGame() {
     updated.currentClueIndex = updated.clues.length;
     updated.turnStartTime = Date.now();
 
-    if (updated.currentClueIndex >= updated.players.length) {
+    // Check if all alive players have submitted
+    if (updated.clues.length >= alivePlayers.length) {
       updated.phase = PHASES.DISCUSSION;
       updated.phaseStartTime = Date.now();
     }
@@ -830,12 +927,16 @@ export default function ImpostorGame() {
       return;
     }
 
+    const eliminatedIds = latestGame.eliminatedIds || [];
+    const alivePlayers = latestGame.players.filter(p => !eliminatedIds.includes(p.id));
+
     const updated = { ...latestGame };
     updated.clues.push({ playerId, clue: clue.trim() });
     updated.currentClueIndex = updated.clues.length;
     updated.turnStartTime = Date.now();
 
-    if (updated.currentClueIndex >= updated.players.length) {
+    // Check if all alive players have submitted
+    if (updated.clues.length >= alivePlayers.length) {
       updated.phase = PHASES.DISCUSSION;
       updated.phaseStartTime = Date.now();
     }
@@ -852,6 +953,31 @@ export default function ImpostorGame() {
     setPhase(PHASES.VOTING);
   };
 
+  const processVoteResult = (gameState) => {
+    const votes = gameState.votes;
+    const tally = {};
+    Object.values(votes).forEach((v) => { tally[v] = (tally[v] || 0) + 1; });
+    const maxVotes = Math.max(...Object.values(tally));
+    const eliminatedId = Object.entries(tally).find(([id, count]) => count === maxVotes)?.[0];
+
+    const updated = { ...gameState };
+    updated.eliminatedIds = [...(updated.eliminatedIds || []), eliminatedId];
+    updated.lastEliminatedId = eliminatedId;
+
+    // Check win condition
+    const winner = checkWinCondition(updated.players, updated.impostorIds, updated.eliminatedIds);
+
+    if (winner) {
+      updated.winner = winner;
+      updated.phase = PHASES.REVEAL;
+    } else {
+      // Game continues - show round result
+      updated.phase = PHASES.ROUND_RESULT;
+    }
+
+    return updated;
+  };
+
   const forceEndVoting = async () => {
     const latestGame = await loadGame(game.roomCode);
     if (!latestGame || latestGame.phase !== PHASES.VOTING) return;
@@ -859,25 +985,25 @@ export default function ImpostorGame() {
     const votes = latestGame.votes;
     if (Object.keys(votes).length === 0) return;
 
-    const tally = {};
-    Object.values(votes).forEach((v) => { tally[v] = (tally[v] || 0) + 1; });
-    const maxVotes = Math.max(...Object.values(tally));
-    const eliminated = Object.entries(tally).find(([id, count]) => count === maxVotes)?.[0];
-
-    const updated = { ...latestGame };
-    updated.eliminatedId = eliminated;
-    updated.winner = updated.impostorIds.includes(eliminated) ? 'crew' : 'impostor';
-    updated.phase = PHASES.REVEAL;
+    const updated = processVoteResult(latestGame);
 
     await saveGame(updated);
     setGame(updated);
-    setPhase(PHASES.REVEAL);
+    setPhase(updated.phase);
   };
 
   const vote = async (votedForId) => {
     const latestGame = await loadGame(game.roomCode);
     if (!latestGame) {
       setError('Failed to submit vote');
+      return;
+    }
+
+    const eliminatedIds = latestGame.eliminatedIds || [];
+    if (eliminatedIds.includes(playerId)) {
+      // Eliminated players can't vote
+      setGame(latestGame);
+      setPhase(latestGame.phase);
       return;
     }
 
@@ -890,20 +1016,48 @@ export default function ImpostorGame() {
     const updated = { ...latestGame };
     updated.votes[playerId] = votedForId;
 
-    if (Object.keys(updated.votes).length >= updated.players.length) {
-      const tally = {};
-      Object.values(updated.votes).forEach((v) => { tally[v] = (tally[v] || 0) + 1; });
-      const maxVotes = Math.max(...Object.values(tally));
-      const eliminated = Object.entries(tally).find(([id, count]) => count === maxVotes)?.[0];
-
-      updated.eliminatedId = eliminated;
-      updated.winner = updated.impostorIds.includes(eliminated) ? 'crew' : 'impostor';
-      updated.phase = PHASES.REVEAL;
+    // Check if all alive players have voted
+    const alivePlayers = updated.players.filter(p => !(updated.eliminatedIds || []).includes(p.id));
+    if (Object.keys(updated.votes).length >= alivePlayers.length) {
+      const finalUpdate = processVoteResult(updated);
+      await saveGame(finalUpdate);
+      setGame(finalUpdate);
+      setPhase(finalUpdate.phase);
+    } else {
+      await saveGame(updated);
+      setGame(updated);
+      setPhase(updated.phase);
     }
+  };
+
+  const nextRound = async () => {
+    const latestGame = await loadGame(game.roomCode);
+    if (!latestGame) return;
+
+    // Check if game should end
+    const winner = checkWinCondition(latestGame.players, latestGame.impostorIds, latestGame.eliminatedIds);
+    if (winner) {
+      const updated = { ...latestGame, winner, phase: PHASES.REVEAL };
+      await saveGame(updated);
+      setGame(updated);
+      setPhase(PHASES.REVEAL);
+      return;
+    }
+
+    // Start new round
+    const updated = {
+      ...latestGame,
+      round: (latestGame.round || 1) + 1,
+      phase: PHASES.CLUE,
+      clues: [],
+      currentClueIndex: 0,
+      turnStartTime: Date.now(),
+      votes: {}
+    };
 
     await saveGame(updated);
     setGame(updated);
-    setPhase(updated.phase);
+    setPhase(PHASES.CLUE);
   };
 
   const playAgain = async () => {
@@ -931,7 +1085,9 @@ export default function ImpostorGame() {
       currentClueIndex: 0,
       turnStartTime: Date.now(),
       votes: {},
-      eliminatedId: null,
+      eliminatedIds: [],
+      lastEliminatedId: null,
+      round: 1,
       winner: null
     };
     await saveGame(updated);
@@ -972,6 +1128,7 @@ export default function ImpostorGame() {
       {phase === PHASES.CLUE && game && <CluePhase game={game} playerId={playerId} onSubmitClue={submitClue} onSkipTurn={skipTurn} onKickPlayer={kickPlayer} />}
       {phase === PHASES.DISCUSSION && game && <DiscussionPhase game={game} playerId={playerId} onEndDiscussion={endDiscussion} onKickPlayer={kickPlayer} />}
       {phase === PHASES.VOTING && game && <VotingPhase game={game} playerId={playerId} onVote={vote} onForceEndVoting={forceEndVoting} onKickPlayer={kickPlayer} />}
+      {phase === PHASES.ROUND_RESULT && game && <RoundResultPhase game={game} playerId={playerId} onNextRound={nextRound} />}
       {phase === PHASES.REVEAL && game && <RevealPhase game={game} playerId={playerId} onPlayAgain={playAgain} onBackToLobby={backToLobby} />}
     </div>
   );
