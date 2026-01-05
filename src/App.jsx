@@ -204,6 +204,72 @@ const LobbyScreen = ({ game, playerId, onStartGame, onUpdateSettings }) => {
                 className="w-full"
               />
             </div>
+            <div>
+              <label className="text-white/60 text-sm block mb-2">Discussion Time: {game.settings.discussionTime || 60}s</label>
+              <input
+                type="range"
+                min={30}
+                max={180}
+                step={15}
+                value={game.settings.discussionTime || 60}
+                onChange={(e) => onUpdateSettings({ discussionTime: parseInt(e.target.value) })}
+                className="w-full"
+              />
+              <div className="flex justify-between text-xs text-white/40 mt-1">
+                <span>30s</span>
+                <span>60s</span>
+                <span>90s</span>
+                <span>120s</span>
+                <span>180s</span>
+              </div>
+            </div>
+            <div>
+              <label className="text-white/60 text-sm block mb-2">Clue Time Limit: {game.settings.clueTimeLimit === 0 ? 'Unlimited' : `${game.settings.clueTimeLimit}s`}</label>
+              <input
+                type="range"
+                min={0}
+                max={60}
+                step={10}
+                value={game.settings.clueTimeLimit || 0}
+                onChange={(e) => onUpdateSettings({ clueTimeLimit: parseInt(e.target.value) })}
+                className="w-full"
+              />
+              <div className="flex justify-between text-xs text-white/40 mt-1">
+                <span>None</span>
+                <span>30s</span>
+                <span>60s</span>
+              </div>
+            </div>
+            <div className="flex items-center justify-between">
+              <label className="text-white/60 text-sm">Show Timer</label>
+              <button
+                onClick={() => onUpdateSettings({ showTimer: !game.settings.showTimer })}
+                className={`relative inline-flex h-6 w-11 items-center rounded-full transition ${
+                  game.settings.showTimer ? 'bg-purple-500' : 'bg-white/20'
+                }`}
+              >
+                <span
+                  className={`inline-block h-4 w-4 transform rounded-full bg-white transition ${
+                    game.settings.showTimer ? 'translate-x-6' : 'translate-x-1'
+                  }`}
+                />
+              </button>
+            </div>
+            <div className="flex items-center justify-between">
+              <label className="text-white/60 text-sm">Auto-End Discussion</label>
+              <button
+                onClick={() => onUpdateSettings({ autoEndDiscussion: !game.settings.autoEndDiscussion })}
+                className={`relative inline-flex h-6 w-11 items-center rounded-full transition ${
+                  game.settings.autoEndDiscussion ? 'bg-purple-500' : 'bg-white/20'
+                }`}
+              >
+                <span
+                  className={`inline-block h-4 w-4 transform rounded-full bg-white transition ${
+                    game.settings.autoEndDiscussion ? 'translate-x-6' : 'translate-x-1'
+                  }`}
+                />
+              </button>
+            </div>
           </div>
         )}
 
@@ -294,7 +360,7 @@ const CluePhase = ({ game, playerId, onSubmitClue }) => {
 };
 
 const DiscussionPhase = ({ game, playerId, onEndDiscussion }) => {
-  const [timeLeft, setTimeLeft] = useState(60);
+  const [timeLeft, setTimeLeft] = useState(game.settings.discussionTime || 60);
   const isHost = game.hostId === playerId;
   const isImpostor = game.impostorIds.includes(playerId);
 
@@ -303,12 +369,20 @@ const DiscussionPhase = ({ game, playerId, onEndDiscussion }) => {
     return () => clearInterval(timer);
   }, []);
 
+  useEffect(() => {
+    if (timeLeft === 0 && game.settings.autoEndDiscussion && isHost) {
+      onEndDiscussion();
+    }
+  }, [timeLeft, game.settings.autoEndDiscussion, isHost, onEndDiscussion]);
+
   return (
     <div className="flex flex-col items-center justify-center min-h-screen p-4">
       <Card className="w-full max-w-lg text-center">
-        <div className="mb-6">
-          <Timer seconds={timeLeft} label="Discussion Time" />
-        </div>
+        {game.settings.showTimer && (
+          <div className="mb-6">
+            <Timer seconds={timeLeft} label="Discussion Time" />
+          </div>
+        )}
 
         <div className="text-2xl font-bold text-white mb-2">🗣️ Discuss!</div>
         <p className="text-white/60 mb-6">Who seems suspicious? Talk it out!</p>
@@ -507,7 +581,15 @@ export default function ImpostorGame() {
       hostId: playerId,
       players: [{ id: playerId, name: name.trim() }],
       phase: PHASES.LOBBY,
-      settings: { category: 'food', numImpostors: 1, language: 'en' },
+      settings: {
+        category: 'food',
+        numImpostors: 1,
+        language: 'en',
+        discussionTime: 60,
+        clueTimeLimit: 0,
+        showTimer: true,
+        autoEndDiscussion: false
+      },
       secretWord: '',
       impostorIds: [],
       clues: [],
