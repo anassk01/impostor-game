@@ -195,9 +195,10 @@ const CluePhase = ({ game, playerId, onSubmitClue }) => {
   const [clue, setClue] = useState('');
   const player = game.players.find((p) => p.id === playerId);
   const isImpostor = game.impostorIds.includes(playerId);
-  const currentPlayer = game.players[game.currentClueIndex];
-  const isMyTurn = currentPlayer?.id === playerId;
   const myClue = game.clues.find((c) => c.playerId === playerId);
+  // Find the next player who hasn't submitted a clue (more robust than using currentClueIndex)
+  const currentPlayer = game.players.find(p => !game.clues.find(c => c.playerId === p.id));
+  const isMyTurn = currentPlayer?.id === playerId;
 
   return (
     <div className="flex flex-col items-center justify-center min-h-screen p-4">
@@ -220,9 +221,9 @@ const CluePhase = ({ game, playerId, onSubmitClue }) => {
         <div className="mb-6">
           <div className="text-white/60 text-sm mb-2">Turn Order</div>
           <div className="flex flex-wrap justify-center gap-2">
-            {game.players.map((p, i) => {
+            {game.players.map((p) => {
               const hasClue = game.clues.find((c) => c.playerId === p.id);
-              const isCurrent = i === game.currentClueIndex;
+              const isCurrent = currentPlayer?.id === p.id;
               return (
                 <div key={p.id} className={`px-3 py-1 rounded-full text-sm ${isCurrent ? 'bg-purple-500 text-white' : hasClue ? 'bg-green-500/30 text-green-300' : 'bg-white/10 text-white/50'}`}>
                   {p.name}{p.id === playerId ? ' (You)' : ''}
@@ -451,26 +452,38 @@ export default function ImpostorGame() {
   });
   const [error, setError] = useState('');
   const pollingRef = useRef(null);
+  const gameRef = useRef(null);
+
+  // Keep gameRef in sync with game state
+  useEffect(() => {
+    gameRef.current = game;
+  }, [game]);
 
   useEffect(() => {
     sessionStorage.setItem('impostorPlayerId', playerId);
   }, [playerId]);
 
-  // Polling for game updates
+  // Polling for game updates - use ref to avoid stale closure
   useEffect(() => {
     if (!game?.roomCode) return;
-    
+
+    const roomCode = game.roomCode; // Capture roomCode for this effect
+
     const poll = async () => {
-      const latest = await loadGame(game.roomCode);
-      if (latest && JSON.stringify(latest) !== JSON.stringify(game)) {
+      const latest = await loadGame(roomCode);
+      if (!latest) return;
+
+      // Use ref to get current game state, avoiding stale closure
+      const currentGame = gameRef.current;
+      if (JSON.stringify(latest) !== JSON.stringify(currentGame)) {
         setGame(latest);
         setPhase(latest.phase);
       }
     };
 
-    pollingRef.current = setInterval(poll, 1500);
+    pollingRef.current = setInterval(poll, 1000); // Faster polling for better sync
     return () => clearInterval(pollingRef.current);
-  }, [game]);
+  }, [game?.roomCode]); // Only re-create interval when roomCode changes
 
   const createGame = async (name) => {
     const roomCode = generateRoomCode();
@@ -534,13 +547,24 @@ export default function ImpostorGame() {
   };
 
   const startGame = async () => {
-    const shuffledPlayers = shuffleArray(game.players);
-    const impostorCount = Math.min(game.settings.numImpostors, Math.floor(shuffledPlayers.length / 3));
-    const impostorIds = shuffledPlayers.slice(0, impostorCount).map((p) => p.id);
-    const secretWord = pickRandom(WORD_CATEGORIES[game.settings.category]);
+    // Reload from Firebase to get the latest players list (avoids race conditions)
+    const latestGame = await loadGame(game.roomCode);
+    if (!latestGame) {
+      setError('Failed to load game');
+      return;
+    }
+
+    // Pick impostors randomly (separate from turn order)
+    const impostorCount = Math.min(latestGame.settings.numImpostors, Math.floor(latestGame.players.length / 3));
+    const shuffledForImpostors = shuffleArray(latestGame.players);
+    const impostorIds = shuffledForImpostors.slice(0, impostorCount).map((p) => p.id);
+
+    // Shuffle again for turn order (impostor won't always be first)
+    const shuffledPlayers = shuffleArray(latestGame.players);
+    const secretWord = pickRandom(WORD_CATEGORIES[latestGame.settings.category]);
 
     const updated = {
-      ...game,
+      ...latestGame,
       players: shuffledPlayers,
       impostorIds,
       secretWord,
@@ -557,14 +581,28 @@ export default function ImpostorGame() {
   };
 
   const submitClue = async (clue) => {
-    const updated = { ...game };
+    // Reload from Firebase to get the latest state (avoid overwriting other clues)
+    const latestGame = await loadGame(game.roomCode);
+    if (!latestGame) {
+      setError('Failed to submit clue');
+      return;
+    }
+
+    // Check if we already submitted a clue
+    if (latestGame.clues.find(c => c.playerId === playerId)) {
+      setGame(latestGame);
+      setPhase(latestGame.phase);
+      return;
+    }
+
+    const updated = { ...latestGame };
     updated.clues.push({ playerId, clue: clue.trim() });
-    updated.currentClueIndex++;
-    
+    updated.currentClueIndex = updated.clues.length; // Use clues.length for accurate index
+
     if (updated.currentClueIndex >= updated.players.length) {
       updated.phase = PHASES.DISCUSSION;
     }
-    
+
     await saveGame(updated);
     setGame(updated);
     setPhase(updated.phase);
@@ -578,34 +616,59 @@ export default function ImpostorGame() {
   };
 
   const vote = async (votedForId) => {
-    const updated = { ...game };
+    // Reload from Firebase to get the latest votes
+    const latestGame = await loadGame(game.roomCode);
+    if (!latestGame) {
+      setError('Failed to submit vote');
+      return;
+    }
+
+    // Check if we already voted
+    if (latestGame.votes[playerId]) {
+      setGame(latestGame);
+      setPhase(latestGame.phase);
+      return;
+    }
+
+    const updated = { ...latestGame };
     updated.votes[playerId] = votedForId;
-    
+
     if (Object.keys(updated.votes).length >= updated.players.length) {
       // Tally votes
       const tally = {};
       Object.values(updated.votes).forEach((v) => { tally[v] = (tally[v] || 0) + 1; });
       const maxVotes = Math.max(...Object.values(tally));
       const eliminated = Object.entries(tally).find(([id, count]) => count === maxVotes)?.[0];
-      
+
       updated.eliminatedId = eliminated;
       updated.winner = updated.impostorIds.includes(eliminated) ? 'crew' : 'impostor';
       updated.phase = PHASES.REVEAL;
     }
-    
+
     await saveGame(updated);
     setGame(updated);
     setPhase(updated.phase);
   };
 
   const playAgain = async () => {
-    const shuffledPlayers = shuffleArray(game.players);
-    const impostorCount = Math.min(game.settings.numImpostors, Math.floor(shuffledPlayers.length / 3));
-    const impostorIds = shuffledPlayers.slice(0, impostorCount).map((p) => p.id);
-    const secretWord = pickRandom(WORD_CATEGORIES[game.settings.category]);
+    // Reload from Firebase to get the latest state
+    const latestGame = await loadGame(game.roomCode);
+    if (!latestGame) {
+      setError('Failed to load game');
+      return;
+    }
+
+    // Pick impostors randomly (separate from turn order)
+    const impostorCount = Math.min(latestGame.settings.numImpostors, Math.floor(latestGame.players.length / 3));
+    const shuffledForImpostors = shuffleArray(latestGame.players);
+    const impostorIds = shuffledForImpostors.slice(0, impostorCount).map((p) => p.id);
+
+    // Shuffle again for turn order (impostor won't always be first)
+    const shuffledPlayers = shuffleArray(latestGame.players);
+    const secretWord = pickRandom(WORD_CATEGORIES[latestGame.settings.category]);
 
     const updated = {
-      ...game,
+      ...latestGame,
       players: shuffledPlayers,
       impostorIds,
       secretWord,
