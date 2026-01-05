@@ -1,11 +1,15 @@
-// Simple storage API using localStorage
+import { database } from './firebase';
+import { ref, set, get, remove } from 'firebase/database';
+
+// Storage API using Firebase Realtime Database
 const STORAGE_PREFIX = 'impostor_game_';
 
 export const storage = {
   async set(key, value, isGlobal = false) {
     try {
       const storageKey = isGlobal ? `${STORAGE_PREFIX}${key}` : key;
-      localStorage.setItem(storageKey, value);
+      const dbRef = ref(database, storageKey);
+      await set(dbRef, value);
       return true;
     } catch (error) {
       console.error('Storage set error:', error);
@@ -16,8 +20,13 @@ export const storage = {
   async get(key, isGlobal = false) {
     try {
       const storageKey = isGlobal ? `${STORAGE_PREFIX}${key}` : key;
-      const value = localStorage.getItem(storageKey);
-      return value ? { value } : null;
+      const dbRef = ref(database, storageKey);
+      const snapshot = await get(dbRef);
+
+      if (snapshot.exists()) {
+        return { value: snapshot.val() };
+      }
+      return null;
     } catch (error) {
       console.error('Storage get error:', error);
       return null;
@@ -27,7 +36,8 @@ export const storage = {
   async remove(key, isGlobal = false) {
     try {
       const storageKey = isGlobal ? `${STORAGE_PREFIX}${key}` : key;
-      localStorage.removeItem(storageKey);
+      const dbRef = ref(database, storageKey);
+      await remove(dbRef);
       return true;
     } catch (error) {
       console.error('Storage remove error:', error);
