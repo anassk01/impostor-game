@@ -4,12 +4,27 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 // CONSTANTS & WORD DATA
 // ============================================
 const WORD_CATEGORIES = {
-  food: ['Pizza', 'Sushi', 'Burger', 'Taco', 'Pasta', 'Ice Cream', 'Chocolate', 'Steak', 'Salad', 'Soup', 'Sandwich', 'Pancake', 'Donut', 'Popcorn', 'Cheese'],
-  animals: ['Dog', 'Cat', 'Elephant', 'Lion', 'Penguin', 'Dolphin', 'Eagle', 'Snake', 'Rabbit', 'Tiger', 'Bear', 'Monkey', 'Giraffe', 'Wolf', 'Owl'],
-  movies: ['Titanic', 'Avatar', 'Inception', 'Frozen', 'Jaws', 'Matrix', 'Shrek', 'Batman', 'Joker', 'Alien', 'Rocky', 'Gladiator', 'Up', 'Coco', 'Moana'],
-  places: ['Beach', 'Mountain', 'Paris', 'Hospital', 'School', 'Airport', 'Museum', 'Library', 'Restaurant', 'Zoo', 'Stadium', 'Castle', 'Desert', 'Forest', 'Island'],
-  sports: ['Soccer', 'Basketball', 'Tennis', 'Swimming', 'Golf', 'Baseball', 'Hockey', 'Boxing', 'Skiing', 'Surfing', 'Cycling', 'Wrestling', 'Volleyball', 'Rugby', 'Cricket'],
-  objects: ['Phone', 'Guitar', 'Clock', 'Mirror', 'Umbrella', 'Candle', 'Camera', 'Scissors', 'Balloon', 'Ladder', 'Hammer', 'Pillow', 'Backpack', 'Glasses', 'Key']
+  en: {
+    food: ['Pizza', 'Sushi', 'Burger', 'Taco', 'Pasta', 'Ice Cream', 'Chocolate', 'Steak', 'Salad', 'Soup', 'Sandwich', 'Pancake', 'Donut', 'Popcorn', 'Cheese'],
+    animals: ['Dog', 'Cat', 'Elephant', 'Lion', 'Penguin', 'Dolphin', 'Eagle', 'Snake', 'Rabbit', 'Tiger', 'Bear', 'Monkey', 'Giraffe', 'Wolf', 'Owl'],
+    movies: ['Titanic', 'Avatar', 'Inception', 'Frozen', 'Jaws', 'Matrix', 'Shrek', 'Batman', 'Joker', 'Alien', 'Rocky', 'Gladiator', 'Up', 'Coco', 'Moana'],
+    places: ['Beach', 'Mountain', 'Paris', 'Hospital', 'School', 'Airport', 'Museum', 'Library', 'Restaurant', 'Zoo', 'Stadium', 'Castle', 'Desert', 'Forest', 'Island'],
+    sports: ['Soccer', 'Basketball', 'Tennis', 'Swimming', 'Golf', 'Baseball', 'Hockey', 'Boxing', 'Skiing', 'Surfing', 'Cycling', 'Wrestling', 'Volleyball', 'Rugby', 'Cricket'],
+    objects: ['Phone', 'Guitar', 'Clock', 'Mirror', 'Umbrella', 'Candle', 'Camera', 'Scissors', 'Balloon', 'Ladder', 'Hammer', 'Pillow', 'Backpack', 'Glasses', 'Key']
+  },
+  ar: {
+    food: ['بيتزا', 'سوشي', 'برجر', 'تاكو', 'باستا', 'آيس كريم', 'شوكولاتة', 'ستيك', 'سلطة', 'شوربة', 'ساندويتش', 'فطيرة', 'دونات', 'فشار', 'جبن'],
+    animals: ['كلب', 'قطة', 'فيل', 'أسد', 'بطريق', 'دولفين', 'نسر', 'ثعبان', 'أرنب', 'نمر', 'دب', 'قرد', 'زرافة', 'ذئب', 'بومة'],
+    movies: ['تايتانيك', 'أفاتار', 'إنسبشن', 'فروزن', 'جوز', 'ماتريكس', 'شريك', 'باتمان', 'جوكر', 'إليين', 'روكي', 'جلادياتور', 'أب', 'كوكو', 'موانا'],
+    places: ['شاطئ', 'جبل', 'باريس', 'مستشفى', 'مدرسة', 'مطار', 'متحف', 'مكتبة', 'مطعم', 'حديقة حيوان', 'ملعب', 'قصر', 'صحراء', 'غابة', 'جزيرة'],
+    sports: ['كرة قدم', 'كرة سلة', 'تنس', 'سباحة', 'جولف', 'بيسبول', 'هوكي', 'ملاكمة', 'تزلج', 'ركوب أمواج', 'دراجات', 'مصارعة', 'كرة طائرة', 'رجبي', 'كريكيت'],
+    objects: ['هاتف', 'جيتار', 'ساعة', 'مرآة', 'مظلة', 'شمعة', 'كاميرا', 'مقص', 'بالون', 'سلم', 'مطرقة', 'وسادة', 'حقيبة ظهر', 'نظارات', 'مفتاح']
+  }
+};
+
+const CATEGORY_NAMES = {
+  en: { food: 'Food', animals: 'Animals', movies: 'Movies', places: 'Places', sports: 'Sports', objects: 'Objects' },
+  ar: { food: 'طعام', animals: 'حيوانات', movies: 'أفلام', places: 'أماكن', sports: 'رياضة', objects: 'أشياء' }
 };
 
 const PHASES = { HOME: 'home', LOBBY: 'lobby', CLUE: 'clue', DISCUSSION: 'discussion', VOTING: 'voting', REVEAL: 'reveal' };
@@ -154,14 +169,27 @@ const LobbyScreen = ({ game, playerId, onStartGame, onUpdateSettings }) => {
         {isHost && (
           <div className="space-y-4 mb-6 p-4 rounded-xl bg-white/5">
             <div>
+              <label className="text-white/60 text-sm block mb-2">Language / اللغة</label>
+              <select
+                value={game.settings.language || 'en'}
+                onChange={(e) => onUpdateSettings({ language: e.target.value })}
+                className="w-full px-4 py-2 rounded-lg bg-white/10 text-white border border-white/20"
+              >
+                <option value="en" className="bg-gray-800">English</option>
+                <option value="ar" className="bg-gray-800">العربية (Arabic)</option>
+              </select>
+            </div>
+            <div>
               <label className="text-white/60 text-sm block mb-2">Category</label>
               <select
                 value={game.settings.category}
                 onChange={(e) => onUpdateSettings({ category: e.target.value })}
                 className="w-full px-4 py-2 rounded-lg bg-white/10 text-white border border-white/20"
               >
-                {Object.keys(WORD_CATEGORIES).map((cat) => (
-                  <option key={cat} value={cat} className="bg-gray-800">{cat.charAt(0).toUpperCase() + cat.slice(1)}</option>
+                {Object.keys(WORD_CATEGORIES[game.settings.language || 'en']).map((cat) => (
+                  <option key={cat} value={cat} className="bg-gray-800">
+                    {CATEGORY_NAMES[game.settings.language || 'en'][cat]}
+                  </option>
                 ))}
               </select>
             </div>
@@ -479,7 +507,7 @@ export default function ImpostorGame() {
       hostId: playerId,
       players: [{ id: playerId, name: name.trim() }],
       phase: PHASES.LOBBY,
-      settings: { category: 'food', numImpostors: 1 },
+      settings: { category: 'food', numImpostors: 1, language: 'en' },
       secretWord: '',
       impostorIds: [],
       clues: [],
@@ -537,7 +565,8 @@ export default function ImpostorGame() {
     const shuffledPlayers = shuffleArray(game.players);
     const impostorCount = Math.min(game.settings.numImpostors, Math.floor(shuffledPlayers.length / 3));
     const impostorIds = shuffledPlayers.slice(0, impostorCount).map((p) => p.id);
-    const secretWord = pickRandom(WORD_CATEGORIES[game.settings.category]);
+    const language = game.settings.language || 'en';
+    const secretWord = pickRandom(WORD_CATEGORIES[language][game.settings.category]);
 
     const updated = {
       ...game,
@@ -602,7 +631,8 @@ export default function ImpostorGame() {
     const shuffledPlayers = shuffleArray(game.players);
     const impostorCount = Math.min(game.settings.numImpostors, Math.floor(shuffledPlayers.length / 3));
     const impostorIds = shuffledPlayers.slice(0, impostorCount).map((p) => p.id);
-    const secretWord = pickRandom(WORD_CATEGORIES[game.settings.category]);
+    const language = game.settings.language || 'en';
+    const secretWord = pickRandom(WORD_CATEGORIES[language][game.settings.category]);
 
     const updated = {
       ...game,
