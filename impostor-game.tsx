@@ -176,6 +176,30 @@ const LobbyScreen = ({ game, playerId, onStartGame, onUpdateSettings }) => {
                 className="w-full"
               />
             </div>
+            <div>
+              <label className="text-white/60 text-sm block mb-2">Discussion Time: {game.settings.discussionTime || 60}s</label>
+              <input
+                type="range"
+                min={30}
+                max={180}
+                step={15}
+                value={game.settings.discussionTime || 60}
+                onChange={(e) => onUpdateSettings({ discussionTime: parseInt(e.target.value) })}
+                className="w-full"
+              />
+            </div>
+            <div>
+              <label className="text-white/60 text-sm block mb-2">Voting Time: {game.settings.votingTime || 45}s</label>
+              <input
+                type="range"
+                min={20}
+                max={120}
+                step={10}
+                value={game.settings.votingTime || 45}
+                onChange={(e) => onUpdateSettings({ votingTime: parseInt(e.target.value) })}
+                className="w-full"
+              />
+            </div>
           </div>
         )}
 
@@ -267,14 +291,30 @@ const CluePhase = ({ game, playerId, onSubmitClue }) => {
 };
 
 const DiscussionPhase = ({ game, playerId, onEndDiscussion }) => {
-  const [timeLeft, setTimeLeft] = useState(60);
   const isHost = game.hostId === playerId;
   const isImpostor = game.impostorIds.includes(playerId);
+  const discussionTime = game.settings.discussionTime || 60;
+
+  // Calculate time left based on phaseStartTime (synced across all players)
+  const calculateTimeLeft = () => {
+    if (!game.phaseStartTime) return discussionTime;
+    const elapsed = Math.floor((Date.now() - game.phaseStartTime) / 1000);
+    return Math.max(0, discussionTime - elapsed);
+  };
+
+  const [timeLeft, setTimeLeft] = useState(calculateTimeLeft);
 
   useEffect(() => {
-    const timer = setInterval(() => setTimeLeft((t) => Math.max(0, t - 1)), 1000);
+    const timer = setInterval(() => {
+      const remaining = calculateTimeLeft();
+      setTimeLeft(remaining);
+      // Auto-advance when timer expires (host only to avoid race conditions)
+      if (remaining <= 0 && isHost) {
+        onEndDiscussion();
+      }
+    }, 1000);
     return () => clearInterval(timer);
-  }, []);
+  }, [game.phaseStartTime, isHost]);
 
   return (
     <div className="flex flex-col items-center justify-center min-h-screen p-4">
@@ -315,15 +355,41 @@ const DiscussionPhase = ({ game, playerId, onEndDiscussion }) => {
   );
 };
 
-const VotingPhase = ({ game, playerId, onVote }) => {
+const VotingPhase = ({ game, playerId, onVote, onForceEndVoting }) => {
   const [selectedId, setSelectedId] = useState(null);
   const hasVoted = game.votes[playerId];
   const voteCount = Object.keys(game.votes).length;
   const totalPlayers = game.players.length;
+  const isHost = game.hostId === playerId;
+  const votingTime = game.settings.votingTime || 45;
+
+  // Calculate time left based on phaseStartTime (synced across all players)
+  const calculateTimeLeft = () => {
+    if (!game.phaseStartTime) return votingTime;
+    const elapsed = Math.floor((Date.now() - game.phaseStartTime) / 1000);
+    return Math.max(0, votingTime - elapsed);
+  };
+
+  const [timeLeft, setTimeLeft] = useState(calculateTimeLeft);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      const remaining = calculateTimeLeft();
+      setTimeLeft(remaining);
+      // Auto-end voting when timer expires (host only)
+      if (remaining <= 0 && isHost && voteCount > 0) {
+        onForceEndVoting();
+      }
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [game.phaseStartTime, isHost, voteCount]);
 
   return (
     <div className="flex flex-col items-center justify-center min-h-screen p-4">
       <Card className="w-full max-w-lg text-center">
+        <div className="mb-4">
+          <Timer seconds={timeLeft} label="Voting Time" />
+        </div>
         <div className="text-2xl font-bold text-white mb-2">🗳️ Vote!</div>
         <p className="text-white/60 mb-6">Who is the impostor?</p>
         <div className="text-white/40 text-sm mb-4">Votes: {voteCount}/{totalPlayers}</div>
@@ -492,7 +558,7 @@ export default function ImpostorGame() {
       hostId: playerId,
       players: [{ id: playerId, name: name.trim() }],
       phase: PHASES.LOBBY,
-      settings: { category: 'food', numImpostors: 1 },
+      settings: { category: 'food', numImpostors: 1, discussionTime: 60, votingTime: 45 },
       secretWord: '',
       impostorIds: [],
       clues: [],
@@ -601,6 +667,7 @@ export default function ImpostorGame() {
 
     if (updated.currentClueIndex >= updated.players.length) {
       updated.phase = PHASES.DISCUSSION;
+      updated.phaseStartTime = Date.now(); // Set timer start for synced countdown
     }
 
     await saveGame(updated);
@@ -609,10 +676,34 @@ export default function ImpostorGame() {
   };
 
   const endDiscussion = async () => {
-    const updated = { ...game, phase: PHASES.VOTING };
+    const updated = { ...game, phase: PHASES.VOTING, phaseStartTime: Date.now() };
     await saveGame(updated);
     setGame(updated);
     setPhase(PHASES.VOTING);
+  };
+
+  const forceEndVoting = async () => {
+    // Force end voting when timer expires - tally current votes
+    const latestGame = await loadGame(game.roomCode);
+    if (!latestGame || latestGame.phase !== PHASES.VOTING) return;
+
+    const votes = latestGame.votes;
+    if (Object.keys(votes).length === 0) return; // No votes cast
+
+    // Tally votes
+    const tally = {};
+    Object.values(votes).forEach((v) => { tally[v] = (tally[v] || 0) + 1; });
+    const maxVotes = Math.max(...Object.values(tally));
+    const eliminated = Object.entries(tally).find(([id, count]) => count === maxVotes)?.[0];
+
+    const updated = { ...latestGame };
+    updated.eliminatedId = eliminated;
+    updated.winner = updated.impostorIds.includes(eliminated) ? 'crew' : 'impostor';
+    updated.phase = PHASES.REVEAL;
+
+    await saveGame(updated);
+    setGame(updated);
+    setPhase(PHASES.REVEAL);
   };
 
   const vote = async (votedForId) => {
@@ -714,7 +805,7 @@ export default function ImpostorGame() {
       {phase === PHASES.LOBBY && game && <LobbyScreen game={game} playerId={playerId} onStartGame={startGame} onUpdateSettings={updateSettings} />}
       {phase === PHASES.CLUE && game && <CluePhase game={game} playerId={playerId} onSubmitClue={submitClue} />}
       {phase === PHASES.DISCUSSION && game && <DiscussionPhase game={game} playerId={playerId} onEndDiscussion={endDiscussion} />}
-      {phase === PHASES.VOTING && game && <VotingPhase game={game} playerId={playerId} onVote={vote} />}
+      {phase === PHASES.VOTING && game && <VotingPhase game={game} playerId={playerId} onVote={vote} onForceEndVoting={forceEndVoting} />}
       {phase === PHASES.REVEAL && game && <RevealPhase game={game} playerId={playerId} onPlayAgain={playAgain} onBackToLobby={backToLobby} />}
     </div>
   );
