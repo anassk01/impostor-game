@@ -301,7 +301,6 @@ const LobbyScreen = ({ game, playerId, onStartGame, onUpdateSettings, onKickPlay
 };
 
 const CluePhase = ({ game, playerId, onSubmitClue, onSkipTurn, onKickPlayer }) => {
-  const isHost = game.hostId === playerId;
   const [clue, setClue] = useState('');
   const isImpostor = game.impostorIds.includes(playerId);
   const eliminatedIds = game.eliminatedIds || [];
@@ -314,25 +313,40 @@ const CluePhase = ({ game, playerId, onSubmitClue, onSkipTurn, onKickPlayer }) =
   const clueTime = game.settings.clueTime || 30;
 
   // Synced timer based on turnStartTime
-  const calculateTimeLeft = () => {
+  const calculateTimeLeft = (allowNegative = false) => {
     if (!game.turnStartTime) return clueTime;
     const elapsed = Math.floor((Date.now() - game.turnStartTime) / 1000);
-    return Math.max(0, clueTime - elapsed);
+    const remaining = clueTime - elapsed;
+    return allowNegative ? remaining : Math.max(0, remaining);
   };
 
-  const [timeLeft, setTimeLeft] = useState(calculateTimeLeft);
+  const [timeLeft, setTimeLeft] = useState(() => calculateTimeLeft(false));
+
+  const isHost = game.hostId === playerId;
 
   useEffect(() => {
     const timer = setInterval(() => {
-      const remaining = calculateTimeLeft();
-      setTimeLeft(remaining);
-      // Only trigger skip if it's YOUR turn (prevents race conditions from multiple clients)
-      if (remaining <= 0 && isMyTurn && !myClue && currentPlayer?.id === playerId) {
-        onSkipTurn();
+      const displayTime = calculateTimeLeft(false);
+      const actualTime = calculateTimeLeft(true); // Allow negative for grace period check
+      setTimeLeft(displayTime);
+      // Trigger skip if:
+      // 1. It's YOUR turn and timer expired (immediate)
+      // 2. You're the HOST and timer expired for 2+ seconds (fallback for AFK players)
+      if (actualTime <= 0 && currentPlayer) {
+        const hasPlayerClue = game.clues.find(c => c.playerId === currentPlayer.id);
+        if (!hasPlayerClue) {
+          if (isMyTurn) {
+            // Current player skips immediately
+            onSkipTurn(currentPlayer.id);
+          } else if (isHost && actualTime <= -2) {
+            // Host skips after 2 second grace period (fallback)
+            onSkipTurn(currentPlayer.id);
+          }
+        }
       }
     }, 1000);
     return () => clearInterval(timer);
-  }, [game.turnStartTime, isMyTurn, myClue, currentPlayer?.id, playerId]);
+  }, [game.turnStartTime, isMyTurn, currentPlayer?.id, playerId, isHost, game.clues]);
 
   return (
     <div className="flex flex-col items-center justify-center min-h-screen p-4">
@@ -438,6 +452,7 @@ const DiscussionPhase = ({ game, playerId, onEndDiscussion, onKickPlayer }) => {
   const isHost = game.hostId === playerId;
   const isImpostor = game.impostorIds.includes(playerId);
   const discussionTime = game.settings.discussionTime || 60;
+  const [hasTriggeredEnd, setHasTriggeredEnd] = useState(false);
 
   // Synced timer based on phaseStartTime
   const calculateTimeLeft = () => {
@@ -452,12 +467,14 @@ const DiscussionPhase = ({ game, playerId, onEndDiscussion, onKickPlayer }) => {
     const timer = setInterval(() => {
       const remaining = calculateTimeLeft();
       setTimeLeft(remaining);
-      if (remaining <= 0 && isHost) {
+      // Only trigger once to prevent multiple calls
+      if (remaining <= 0 && isHost && !hasTriggeredEnd) {
+        setHasTriggeredEnd(true);
         onEndDiscussion();
       }
     }, 1000);
     return () => clearInterval(timer);
-  }, [game.phaseStartTime, isHost]);
+  }, [game.phaseStartTime, isHost, hasTriggeredEnd]);
 
   return (
     <div className="flex flex-col items-center justify-center min-h-screen p-4">
@@ -517,6 +534,7 @@ const DiscussionPhase = ({ game, playerId, onEndDiscussion, onKickPlayer }) => {
 
 const VotingPhase = ({ game, playerId, onVote, onForceEndVoting, onKickPlayer }) => {
   const [selectedIds, setSelectedIds] = useState([]);
+  const [hasTriggeredEnd, setHasTriggeredEnd] = useState(false);
   const eliminatedIds = game.eliminatedIds || [];
   const isEliminated = eliminatedIds.includes(playerId);
   const alivePlayers = game.players.filter(p => !eliminatedIds.includes(p.id));
@@ -557,14 +575,15 @@ const VotingPhase = ({ game, playerId, onVote, onForceEndVoting, onKickPlayer })
     const timer = setInterval(() => {
       const remaining = calculateTimeLeft();
       setTimeLeft(remaining);
-      // Force end if time is up and at least some votes have been cast
-      const totalVotesCast = Object.values(game.votes).reduce((sum, v) => sum + (Array.isArray(v) ? v.length : 0), 0);
-      if (remaining <= 0 && isHost && totalVotesCast > 0) {
+      // Force end if time is up (even with 0 votes - will result in no elimination)
+      // Only trigger once to prevent multiple calls
+      if (remaining <= 0 && isHost && !hasTriggeredEnd) {
+        setHasTriggeredEnd(true);
         onForceEndVoting();
       }
     }, 1000);
     return () => clearInterval(timer);
-  }, [game.phaseStartTime, isHost, game.votes]);
+  }, [game.phaseStartTime, isHost, hasTriggeredEnd]);
 
   return (
     <div className="flex flex-col items-center justify-center min-h-screen p-4">
@@ -854,6 +873,17 @@ export default function ImpostorGame() {
       const latest = await loadGame(roomCode);
       if (!latest) return;
 
+      // Check if current player was kicked (not in players list anymore)
+      const stillInGame = latest.players.some(p => p.id === playerId);
+      if (!stillInGame) {
+        // Player was kicked - redirect to home
+        setGame(null);
+        setPhase(PHASES.HOME);
+        window.location.hash = '';
+        setError('You were removed from the game');
+        return;
+      }
+
       const currentGame = gameRef.current;
       if (JSON.stringify(latest) !== JSON.stringify(currentGame)) {
         setGame(latest);
@@ -863,7 +893,7 @@ export default function ImpostorGame() {
 
     pollingRef.current = setInterval(poll, 1000);
     return () => clearInterval(pollingRef.current);
-  }, [game?.roomCode]);
+  }, [game?.roomCode, playerId]);
 
   const createGame = async (name) => {
     const roomCode = generateRoomCode();
@@ -1038,7 +1068,7 @@ export default function ImpostorGame() {
     setPhase(PHASES.CLUE);
   };
 
-  const skipTurn = async () => {
+  const skipTurn = async (targetPlayerId) => {
     const latestGame = await loadGame(game.roomCode);
     if (!latestGame || latestGame.phase !== PHASES.CLUE) return;
 
@@ -1047,8 +1077,15 @@ export default function ImpostorGame() {
     const currentPlayer = alivePlayers.find(p => !latestGame.clues.find(c => c.playerId === p.id));
     if (!currentPlayer) return;
 
-    // Additional check: only allow skip if it's actually this player's turn
-    if (currentPlayer.id !== playerId) return;
+    // Allow skip if:
+    // 1. It's the current player skipping their own turn, OR
+    // 2. The host is skipping (as a fallback for AFK players)
+    const isHost = latestGame.hostId === playerId;
+    const isCurrentPlayer = currentPlayer.id === playerId;
+    const targetIsCurrentPlayer = targetPlayerId === currentPlayer.id;
+
+    if (!targetIsCurrentPlayer) return; // Can only skip the current player's turn
+    if (!isCurrentPlayer && !isHost) return; // Only current player or host can trigger skip
 
     // Check if this player already has a clue (prevents duplicate skip)
     if (latestGame.clues.find(c => c.playerId === currentPlayer.id)) return;
@@ -1071,11 +1108,12 @@ export default function ImpostorGame() {
 
   const submitClue = async (clue) => {
     const latestGame = await loadGame(game.roomCode);
-    if (!latestGame) {
+    if (!latestGame || latestGame.phase !== PHASES.CLUE) {
       setError('Failed to submit clue');
       return;
     }
 
+    // Check if player already submitted
     if (latestGame.clues.find(c => c.playerId === playerId)) {
       setGame(latestGame);
       setPhase(latestGame.phase);
@@ -1084,6 +1122,22 @@ export default function ImpostorGame() {
 
     const eliminatedIds = latestGame.eliminatedIds || [];
     const alivePlayers = latestGame.players.filter(p => !eliminatedIds.includes(p.id));
+
+    // Validate it's actually this player's turn
+    const currentPlayer = alivePlayers.find(p => !latestGame.clues.find(c => c.playerId === p.id));
+    if (!currentPlayer || currentPlayer.id !== playerId) {
+      // Not this player's turn
+      setGame(latestGame);
+      setPhase(latestGame.phase);
+      return;
+    }
+
+    // Check if player is eliminated
+    if (eliminatedIds.includes(playerId)) {
+      setGame(latestGame);
+      setPhase(latestGame.phase);
+      return;
+    }
 
     const updated = { ...latestGame };
     updated.clues.push({ playerId, clue: clue.trim() });
@@ -1102,7 +1156,10 @@ export default function ImpostorGame() {
   };
 
   const endDiscussion = async () => {
-    const updated = { ...game, phase: PHASES.VOTING, phaseStartTime: Date.now() };
+    const latestGame = await loadGame(game.roomCode);
+    if (!latestGame || latestGame.phase !== PHASES.DISCUSSION) return;
+
+    const updated = { ...latestGame, phase: PHASES.VOTING, phaseStartTime: Date.now() };
     await saveGame(updated);
     setGame(updated);
     setPhase(PHASES.VOTING);
@@ -1141,6 +1198,9 @@ export default function ImpostorGame() {
     if (eliminatedId) {
       updated.eliminatedIds = [...(updated.eliminatedIds || []), eliminatedId];
       updated.lastEliminatedId = eliminatedId;
+    } else {
+      // Clear lastEliminatedId when no one is eliminated
+      updated.lastEliminatedId = null;
     }
 
     // Check win condition
@@ -1175,11 +1235,7 @@ export default function ImpostorGame() {
     const latestGame = await loadGame(game.roomCode);
     if (!latestGame || latestGame.phase !== PHASES.VOTING) return;
 
-    const votes = latestGame.votes;
-    // Check if at least some votes have been cast
-    const totalVotesCast = Object.values(votes).reduce((sum, v) => sum + (Array.isArray(v) ? v.length : 0), 0);
-    if (totalVotesCast === 0) return;
-
+    // Process vote result even with 0 votes (will result in no elimination)
     const updated = processVoteResult(latestGame);
 
     await saveGame(updated);
@@ -1212,9 +1268,18 @@ export default function ImpostorGame() {
       return;
     }
 
+    // Validate votes: filter out any votes for eliminated players or self
+    const validVotes = (Array.isArray(votedForIds) ? votedForIds : [votedForIds])
+      .filter(id => id !== playerId && !eliminatedIds.includes(id));
+
+    if (validVotes.length === 0) {
+      setGame(latestGame);
+      setPhase(latestGame.phase);
+      return;
+    }
+
     const updated = { ...latestGame };
-    // Ensure votedForIds is always an array
-    updated.votes[playerId] = Array.isArray(votedForIds) ? votedForIds : [votedForIds];
+    updated.votes[playerId] = validVotes;
 
     // Check if all alive players have voted their full allotment
     const alivePlayers = updated.players.filter(p => !(updated.eliminatedIds || []).includes(p.id));
