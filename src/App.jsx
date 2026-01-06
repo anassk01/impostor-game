@@ -268,6 +268,23 @@ const LobbyScreen = ({ game, playerId, onStartGame, onUpdateSettings, onKickPlay
                 className="w-full"
               />
             </div>
+            <div>
+              <label className="text-white/60 text-sm block mb-2">
+                Votes per Player: {game.settings.votesPerPlayer || 1}
+                {game.settings.votesPerPlayer > 1 && <span className="text-purple-300 ml-2">(Multiple votes enabled)</span>}
+              </label>
+              <input
+                type="range"
+                min={1}
+                max={Math.max(1, Math.floor((game.players.length - 1) / 2))}
+                value={game.settings.votesPerPlayer || 1}
+                onChange={(e) => onUpdateSettings({ votesPerPlayer: parseInt(e.target.value) })}
+                className="w-full"
+              />
+              <div className="text-white/40 text-xs mt-1">
+                Max votes scales with player count. Each player can vote for {game.settings.votesPerPlayer || 1} different player{(game.settings.votesPerPlayer || 1) > 1 ? 's' : ''}.
+              </div>
+            </div>
           </div>
         )}
 
@@ -309,12 +326,13 @@ const CluePhase = ({ game, playerId, onSubmitClue, onSkipTurn, onKickPlayer }) =
     const timer = setInterval(() => {
       const remaining = calculateTimeLeft();
       setTimeLeft(remaining);
-      if (remaining <= 0 && isMyTurn && !myClue) {
+      // Only trigger skip if it's YOUR turn (prevents race conditions from multiple clients)
+      if (remaining <= 0 && isMyTurn && !myClue && currentPlayer?.id === playerId) {
         onSkipTurn();
       }
     }, 1000);
     return () => clearInterval(timer);
-  }, [game.turnStartTime, isMyTurn, myClue]);
+  }, [game.turnStartTime, isMyTurn, myClue, currentPlayer?.id, playerId]);
 
   return (
     <div className="flex flex-col items-center justify-center min-h-screen p-4">
@@ -498,15 +516,33 @@ const DiscussionPhase = ({ game, playerId, onEndDiscussion, onKickPlayer }) => {
 };
 
 const VotingPhase = ({ game, playerId, onVote, onForceEndVoting, onKickPlayer }) => {
-  const [selectedId, setSelectedId] = useState(null);
+  const [selectedIds, setSelectedIds] = useState([]);
   const eliminatedIds = game.eliminatedIds || [];
   const isEliminated = eliminatedIds.includes(playerId);
   const alivePlayers = game.players.filter(p => !eliminatedIds.includes(p.id));
-  const hasVoted = game.votes[playerId];
-  const voteCount = Object.keys(game.votes).length;
+  const votesPerPlayer = game.settings.votesPerPlayer || 1;
+  const myVotes = game.votes[playerId] || [];
+  const hasVoted = myVotes.length >= votesPerPlayer;
+  // Count how many players have completed all their votes
+  const playersWhoVoted = Object.entries(game.votes).filter(([pid, votes]) => {
+    const requiredVotes = votesPerPlayer;
+    return Array.isArray(votes) ? votes.length >= requiredVotes : false;
+  }).length;
   const totalVoters = alivePlayers.length; // Only alive players vote
   const isHost = game.hostId === playerId;
   const votingTime = game.settings.votingTime || 45;
+
+  const toggleSelection = (id) => {
+    if (id === playerId) return; // Can't vote for yourself
+    setSelectedIds(prev => {
+      if (prev.includes(id)) {
+        return prev.filter(x => x !== id);
+      } else if (prev.length < votesPerPlayer) {
+        return [...prev, id];
+      }
+      return prev;
+    });
+  };
 
   // Synced timer based on phaseStartTime
   const calculateTimeLeft = () => {
@@ -521,12 +557,14 @@ const VotingPhase = ({ game, playerId, onVote, onForceEndVoting, onKickPlayer })
     const timer = setInterval(() => {
       const remaining = calculateTimeLeft();
       setTimeLeft(remaining);
-      if (remaining <= 0 && isHost && voteCount > 0) {
+      // Force end if time is up and at least some votes have been cast
+      const totalVotesCast = Object.values(game.votes).reduce((sum, v) => sum + (Array.isArray(v) ? v.length : 0), 0);
+      if (remaining <= 0 && isHost && totalVotesCast > 0) {
         onForceEndVoting();
       }
     }, 1000);
     return () => clearInterval(timer);
-  }, [game.phaseStartTime, isHost, voteCount]);
+  }, [game.phaseStartTime, isHost, game.votes]);
 
   return (
     <div className="flex flex-col items-center justify-center min-h-screen p-4">
@@ -543,32 +581,53 @@ const VotingPhase = ({ game, playerId, onVote, onForceEndVoting, onKickPlayer })
           <Timer seconds={timeLeft} label="Voting Time" />
         </div>
         <div className="text-2xl font-bold text-white mb-2">🗳️ Vote!</div>
-        <p className="text-white/60 mb-6">Who is the impostor?</p>
-        <div className="text-white/40 text-sm mb-4">Votes: {voteCount}/{totalVoters}</div>
+        <p className="text-white/60 mb-6">
+          {votesPerPlayer > 1
+            ? `Select ${votesPerPlayer} players you think are impostors`
+            : 'Who is the impostor?'}
+        </p>
+        <div className="text-white/40 text-sm mb-4">
+          Players voted: {playersWhoVoted}/{totalVoters}
+          {votesPerPlayer > 1 && <span className="ml-2">({votesPerPlayer} votes each)</span>}
+        </div>
 
         {!hasVoted && !isEliminated ? (
           <div className="space-y-3 mb-6">
+            {votesPerPlayer > 1 && (
+              <div className="text-purple-300 text-sm mb-2">
+                Selected: {selectedIds.length}/{votesPerPlayer}
+              </div>
+            )}
             {alivePlayers.map((p) => (
               <button
                 key={p.id}
-                onClick={() => setSelectedId(p.id)}
+                onClick={() => toggleSelection(p.id)}
                 disabled={p.id === playerId}
                 className={`w-full py-3 px-4 rounded-xl border transition ${
                   p.id === playerId
                     ? 'bg-white/5 border-white/10 text-white/30 cursor-not-allowed'
-                    : selectedId === p.id
+                    : selectedIds.includes(p.id)
                       ? 'bg-purple-500/30 border-purple-500 text-white'
                       : 'bg-white/10 border-white/20 text-white hover:bg-white/20'
                 }`}
               >
                 {p.name} {p.id === playerId ? '(You)' : ''}
+                {selectedIds.includes(p.id) && ' ✓'}
               </button>
             ))}
-            <Button onClick={() => onVote(selectedId)} disabled={!selectedId} className="w-full mt-4">Confirm Vote</Button>
+            <Button
+              onClick={() => onVote(selectedIds)}
+              disabled={selectedIds.length !== votesPerPlayer}
+              className="w-full mt-4"
+            >
+              {selectedIds.length === votesPerPlayer
+                ? `Confirm Vote${votesPerPlayer > 1 ? 's' : ''}`
+                : `Select ${votesPerPlayer - selectedIds.length} more`}
+            </Button>
           </div>
         ) : (
           <div className="py-8">
-            <div className="text-green-400 text-lg">✓ Vote submitted!</div>
+            <div className="text-green-400 text-lg">✓ Vote{votesPerPlayer > 1 ? 's' : ''} submitted!</div>
             <div className="text-white/60 mt-2">Waiting for others...</div>
           </div>
         )}
@@ -612,8 +671,8 @@ const VotingPhase = ({ game, playerId, onVote, onForceEndVoting, onKickPlayer })
 const RoundResultPhase = ({ game, playerId, onNextRound }) => {
   const isHost = game.hostId === playerId;
   const lastEliminated = game.lastEliminatedId;
-  const eliminatedPlayer = game.players.find(p => p.id === lastEliminated);
-  const wasImpostor = game.impostorIds.includes(lastEliminated);
+  const eliminatedPlayer = lastEliminated ? game.players.find(p => p.id === lastEliminated) : null;
+  const wasImpostor = lastEliminated ? game.impostorIds.includes(lastEliminated) : false;
   const eliminatedIds = game.eliminatedIds || [];
   const remainingImpostors = game.impostorIds.filter(id => !eliminatedIds.includes(id)).length;
   const totalImpostors = game.impostorIds.length;
@@ -623,17 +682,35 @@ const RoundResultPhase = ({ game, playerId, onNextRound }) => {
       <Card className="w-full max-w-lg text-center">
         <div className="text-purple-300 font-bold mb-4">Round {game.round} Result</div>
 
-        <div className="text-4xl mb-4">{wasImpostor ? '🎯' : '😱'}</div>
+        {eliminatedPlayer ? (
+          <>
+            <div className="text-4xl mb-4">{wasImpostor ? '🎯' : '😱'}</div>
 
-        <div className="text-2xl font-bold text-white mb-2">
-          {eliminatedPlayer?.name} was eliminated!
-        </div>
+            <div className="text-2xl font-bold text-white mb-2">
+              {eliminatedPlayer.name} was eliminated!
+            </div>
 
-        <div className={`py-4 px-6 rounded-xl mb-6 ${wasImpostor ? 'bg-green-500/20' : 'bg-red-500/20'}`}>
-          <div className={`text-lg font-bold ${wasImpostor ? 'text-green-300' : 'text-red-300'}`}>
-            {wasImpostor ? '✓ They were an IMPOSTOR!' : '✗ They were INNOCENT!'}
-          </div>
-        </div>
+            <div className={`py-4 px-6 rounded-xl mb-6 ${wasImpostor ? 'bg-green-500/20' : 'bg-red-500/20'}`}>
+              <div className={`text-lg font-bold ${wasImpostor ? 'text-green-300' : 'text-red-300'}`}>
+                {wasImpostor ? '✓ They were an IMPOSTOR!' : '✗ They were INNOCENT!'}
+              </div>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="text-4xl mb-4">🤷</div>
+
+            <div className="text-2xl font-bold text-white mb-2">
+              No one was eliminated!
+            </div>
+
+            <div className="py-4 px-6 rounded-xl mb-6 bg-yellow-500/20">
+              <div className="text-lg font-bold text-yellow-300">
+                Not enough votes to eliminate anyone
+              </div>
+            </div>
+          </>
+        )}
 
         <div className="text-white/60 mb-6">
           {remainingImpostors > 0 ? (
@@ -664,17 +741,16 @@ const RevealPhase = ({ game, playerId, onPlayAgain, onBackToLobby }) => {
   const impostors = game.players.filter((p) => game.impostorIds.includes(p.id));
   const crewWon = game.winner === 'crew';
 
+  // Get all clues from history (multiple rounds)
+  const clueHistory = game.clueHistory || [];
+  const hasMultipleRounds = clueHistory.length > 1 || (clueHistory.length === 1 && game.round > 1);
+
   return (
     <div className="flex flex-col items-center justify-center min-h-screen p-4">
       <Card className="w-full max-w-lg text-center">
         <div className={`text-6xl mb-4 ${crewWon ? 'animate-bounce' : ''}`}>{crewWon ? '🎉' : '😈'}</div>
         <div className="text-3xl font-bold text-white mb-2">
           {crewWon ? 'Crew Wins!' : 'Impostor Wins!'}
-        </div>
-
-        <div className="py-4 px-6 rounded-xl bg-white/10 mb-6">
-          <div className="text-white/60 text-sm mb-2">The word was:</div>
-          <div className="text-3xl font-bold text-purple-300">{game.secretWord}</div>
         </div>
 
         <div className="mb-6">
@@ -702,18 +778,35 @@ const RevealPhase = ({ game, playerId, onPlayAgain, onBackToLobby }) => {
         )}
 
         <div className="mb-6 p-4 rounded-xl bg-white/5">
-          <div className="text-white/60 text-sm mb-3">Final Clues:</div>
-          <div className="space-y-2">
-            {game.clues.map((c) => {
-              const p = game.players.find((pl) => pl.id === c.playerId);
-              const isImp = game.impostorIds.includes(c.playerId);
-              return (
-                <div key={c.playerId} className={`flex justify-between items-center px-3 py-2 rounded-lg ${isImp ? 'bg-red-500/20' : 'bg-white/10'}`}>
-                  <span className="text-white">{p?.name} {isImp && '🕵️'}</span>
-                  <span className="text-purple-300">"{c.clue}"</span>
-                </div>
-              );
-            })}
+          <div className="text-white/60 text-sm mb-3">
+            {hasMultipleRounds ? 'Clues from All Rounds:' : 'Final Clues:'}
+          </div>
+          <div className="space-y-4">
+            {clueHistory.map((roundData, idx) => (
+              <div key={idx} className="space-y-2">
+                {hasMultipleRounds && (
+                  <div className="text-purple-400 text-sm font-semibold border-b border-white/10 pb-1 mb-2">
+                    Round {roundData.round}: "{roundData.word}"
+                  </div>
+                )}
+                {!hasMultipleRounds && (
+                  <div className="py-4 px-6 rounded-xl bg-white/10 mb-4">
+                    <div className="text-white/60 text-sm mb-2">The word was:</div>
+                    <div className="text-3xl font-bold text-purple-300">{roundData.word}</div>
+                  </div>
+                )}
+                {roundData.clues.map((c) => {
+                  const p = game.players.find((pl) => pl.id === c.playerId);
+                  const isImp = game.impostorIds.includes(c.playerId);
+                  return (
+                    <div key={`${idx}-${c.playerId}`} className={`flex justify-between items-center px-3 py-2 rounded-lg ${isImp ? 'bg-red-500/20' : 'bg-white/10'}`}>
+                      <span className="text-white">{p?.name} {isImp && '🕵️'}</span>
+                      <span className="text-purple-300">"{c.clue}"</span>
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
           </div>
         </div>
 
@@ -785,7 +878,8 @@ export default function ImpostorGame() {
         language: 'en',
         clueTime: 30,
         discussionTime: 60,
-        votingTime: 45
+        votingTime: 45,
+        votesPerPlayer: 1
       },
       secretWord: '',
       impostorIds: [],
@@ -846,12 +940,67 @@ export default function ImpostorGame() {
     if (game.hostId !== playerId) return;
     if (kickedPlayerId === game.hostId) return;
 
+    const latestGame = await loadGame(game.roomCode);
+    if (!latestGame) return;
+
     const updated = {
-      ...game,
-      players: game.players.filter(p => p.id !== kickedPlayerId)
+      ...latestGame,
+      players: latestGame.players.filter(p => p.id !== kickedPlayerId),
+      // Remove from impostorIds if they were an impostor
+      impostorIds: (latestGame.impostorIds || []).filter(id => id !== kickedPlayerId),
+      // Remove from eliminatedIds if they were eliminated
+      eliminatedIds: (latestGame.eliminatedIds || []).filter(id => id !== kickedPlayerId),
+      // Remove their clues
+      clues: (latestGame.clues || []).filter(c => c.playerId !== kickedPlayerId),
+      // Remove their votes
+      votes: Object.fromEntries(
+        Object.entries(latestGame.votes || {})
+          .filter(([voterId]) => voterId !== kickedPlayerId)
+          .map(([voterId, votedFor]) => [
+            voterId,
+            Array.isArray(votedFor)
+              ? votedFor.filter(id => id !== kickedPlayerId)
+              : votedFor === kickedPlayerId ? null : votedFor
+          ])
+          .filter(([, v]) => v !== null && (Array.isArray(v) ? v.length > 0 : true))
+      )
     };
+
+    // Check win condition after kick (during game phases)
+    if (latestGame.phase !== PHASES.LOBBY && latestGame.phase !== PHASES.HOME) {
+      const winner = checkWinCondition(updated.players, updated.impostorIds, updated.eliminatedIds);
+      if (winner) {
+        updated.winner = winner;
+        updated.phase = PHASES.REVEAL;
+      } else if (latestGame.phase === PHASES.CLUE) {
+        // Check if all remaining alive players have submitted clues
+        const alivePlayers = updated.players.filter(p => !(updated.eliminatedIds || []).includes(p.id));
+        const allCluesSubmitted = alivePlayers.every(p => updated.clues.find(c => c.playerId === p.id));
+        if (allCluesSubmitted && alivePlayers.length > 0) {
+          updated.phase = PHASES.DISCUSSION;
+          updated.phaseStartTime = Date.now();
+        }
+      } else if (latestGame.phase === PHASES.VOTING) {
+        // Check if all remaining alive players have voted
+        const alivePlayers = updated.players.filter(p => !(updated.eliminatedIds || []).includes(p.id));
+        const votesPerPlayer = updated.settings.votesPerPlayer || 1;
+        const allVoted = alivePlayers.every(p => {
+          const pVotes = updated.votes[p.id] || [];
+          return pVotes.length >= votesPerPlayer;
+        });
+        if (allVoted && Object.keys(updated.votes).length > 0) {
+          const finalUpdate = processVoteResult(updated);
+          await saveGame(finalUpdate);
+          setGame(finalUpdate);
+          setPhase(finalUpdate.phase);
+          return;
+        }
+      }
+    }
+
     await saveGame(updated);
     setGame(updated);
+    setPhase(updated.phase);
   };
 
   const startGame = async () => {
@@ -897,6 +1046,12 @@ export default function ImpostorGame() {
     const alivePlayers = latestGame.players.filter(p => !eliminatedIds.includes(p.id));
     const currentPlayer = alivePlayers.find(p => !latestGame.clues.find(c => c.playerId === p.id));
     if (!currentPlayer) return;
+
+    // Additional check: only allow skip if it's actually this player's turn
+    if (currentPlayer.id !== playerId) return;
+
+    // Check if this player already has a clue (prevents duplicate skip)
+    if (latestGame.clues.find(c => c.playerId === currentPlayer.id)) return;
 
     const updated = { ...latestGame };
     updated.clues.push({ playerId: currentPlayer.id, clue: '(skipped)' });
@@ -956,13 +1111,37 @@ export default function ImpostorGame() {
   const processVoteResult = (gameState) => {
     const votes = gameState.votes;
     const tally = {};
-    Object.values(votes).forEach((v) => { tally[v] = (tally[v] || 0) + 1; });
-    const maxVotes = Math.max(...Object.values(tally));
-    const eliminatedId = Object.entries(tally).find(([id, count]) => count === maxVotes)?.[0];
+
+    // Handle both old format (single vote) and new format (array of votes)
+    Object.values(votes).forEach((v) => {
+      if (Array.isArray(v)) {
+        // New format: array of voted player IDs
+        v.forEach(votedId => {
+          tally[votedId] = (tally[votedId] || 0) + 1;
+        });
+      } else if (v) {
+        // Old format: single vote (for backwards compatibility)
+        tally[v] = (tally[v] || 0) + 1;
+      }
+    });
+
+    // Find the player(s) with the most votes
+    const maxVotes = Math.max(...Object.values(tally), 0);
+    const playersWithMaxVotes = Object.entries(tally)
+      .filter(([id, count]) => count === maxVotes)
+      .map(([id]) => id);
+
+    // In case of tie, pick randomly among tied players
+    const eliminatedId = playersWithMaxVotes.length > 0
+      ? playersWithMaxVotes[Math.floor(Math.random() * playersWithMaxVotes.length)]
+      : null;
 
     const updated = { ...gameState };
-    updated.eliminatedIds = [...(updated.eliminatedIds || []), eliminatedId];
-    updated.lastEliminatedId = eliminatedId;
+
+    if (eliminatedId) {
+      updated.eliminatedIds = [...(updated.eliminatedIds || []), eliminatedId];
+      updated.lastEliminatedId = eliminatedId;
+    }
 
     // Check win condition
     const winner = checkWinCondition(updated.players, updated.impostorIds, updated.eliminatedIds);
@@ -970,6 +1149,20 @@ export default function ImpostorGame() {
     if (winner) {
       updated.winner = winner;
       updated.phase = PHASES.REVEAL;
+      // Save current round's clues to history for final reveal
+      const currentRound = updated.round || 1;
+      const clueHistory = updated.clueHistory || [];
+      if (updated.clues && updated.clues.length > 0) {
+        clueHistory.push({
+          round: currentRound,
+          word: updated.secretWord,
+          clues: updated.clues
+        });
+        updated.clueHistory = clueHistory;
+      }
+    } else if (!eliminatedId) {
+      // No one was eliminated (no votes), continue to next round
+      updated.phase = PHASES.ROUND_RESULT;
     } else {
       // Game continues - show round result
       updated.phase = PHASES.ROUND_RESULT;
@@ -983,7 +1176,9 @@ export default function ImpostorGame() {
     if (!latestGame || latestGame.phase !== PHASES.VOTING) return;
 
     const votes = latestGame.votes;
-    if (Object.keys(votes).length === 0) return;
+    // Check if at least some votes have been cast
+    const totalVotesCast = Object.values(votes).reduce((sum, v) => sum + (Array.isArray(v) ? v.length : 0), 0);
+    if (totalVotesCast === 0) return;
 
     const updated = processVoteResult(latestGame);
 
@@ -992,7 +1187,7 @@ export default function ImpostorGame() {
     setPhase(updated.phase);
   };
 
-  const vote = async (votedForId) => {
+  const vote = async (votedForIds) => {
     const latestGame = await loadGame(game.roomCode);
     if (!latestGame) {
       setError('Failed to submit vote');
@@ -1007,18 +1202,28 @@ export default function ImpostorGame() {
       return;
     }
 
-    if (latestGame.votes[playerId]) {
+    const votesPerPlayer = latestGame.settings.votesPerPlayer || 1;
+    const existingVotes = latestGame.votes[playerId] || [];
+
+    // Check if already voted the required number
+    if (existingVotes.length >= votesPerPlayer) {
       setGame(latestGame);
       setPhase(latestGame.phase);
       return;
     }
 
     const updated = { ...latestGame };
-    updated.votes[playerId] = votedForId;
+    // Ensure votedForIds is always an array
+    updated.votes[playerId] = Array.isArray(votedForIds) ? votedForIds : [votedForIds];
 
-    // Check if all alive players have voted
+    // Check if all alive players have voted their full allotment
     const alivePlayers = updated.players.filter(p => !(updated.eliminatedIds || []).includes(p.id));
-    if (Object.keys(updated.votes).length >= alivePlayers.length) {
+    const allVoted = alivePlayers.every(p => {
+      const pVotes = updated.votes[p.id] || [];
+      return pVotes.length >= votesPerPlayer;
+    });
+
+    if (allVoted) {
       const finalUpdate = processVoteResult(updated);
       await saveGame(finalUpdate);
       setGame(finalUpdate);
@@ -1037,19 +1242,47 @@ export default function ImpostorGame() {
     // Check if game should end
     const winner = checkWinCondition(latestGame.players, latestGame.impostorIds, latestGame.eliminatedIds);
     if (winner) {
-      const updated = { ...latestGame, winner, phase: PHASES.REVEAL };
+      // Save current round's clues to history for final reveal
+      const currentRound = latestGame.round || 1;
+      const clueHistory = latestGame.clueHistory || [];
+      if (latestGame.clues && latestGame.clues.length > 0) {
+        clueHistory.push({
+          round: currentRound,
+          word: latestGame.secretWord,
+          clues: latestGame.clues
+        });
+      }
+
+      const updated = { ...latestGame, winner, phase: PHASES.REVEAL, clueHistory };
       await saveGame(updated);
       setGame(updated);
       setPhase(PHASES.REVEAL);
       return;
     }
 
-    // Start new round
+    // Pick a new word for the new round
+    const language = latestGame.settings.language || 'en';
+    const newSecretWord = pickRandom(WORD_CATEGORIES[language][latestGame.settings.category]);
+
+    // Save current round's clues to history before starting new round
+    const currentRound = latestGame.round || 1;
+    const clueHistory = latestGame.clueHistory || [];
+    if (latestGame.clues && latestGame.clues.length > 0) {
+      clueHistory.push({
+        round: currentRound,
+        word: latestGame.secretWord,
+        clues: latestGame.clues
+      });
+    }
+
+    // Start new round with new word
     const updated = {
       ...latestGame,
-      round: (latestGame.round || 1) + 1,
+      round: currentRound + 1,
+      secretWord: newSecretWord,
       phase: PHASES.CLUE,
       clues: [],
+      clueHistory,
       currentClueIndex: 0,
       turnStartTime: Date.now(),
       votes: {}
@@ -1082,6 +1315,7 @@ export default function ImpostorGame() {
       secretWord,
       phase: PHASES.CLUE,
       clues: [],
+      clueHistory: [],
       currentClueIndex: 0,
       turnStartTime: Date.now(),
       votes: {},
@@ -1102,11 +1336,14 @@ export default function ImpostorGame() {
       secretWord: '',
       impostorIds: [],
       clues: [],
+      clueHistory: [],
       currentClueIndex: 0,
       turnStartTime: null,
       phaseStartTime: null,
       votes: {},
-      eliminatedId: null,
+      eliminatedIds: [],
+      lastEliminatedId: null,
+      round: 1,
       winner: null
     };
     await saveGame(updated);
