@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Button, Input, Card, Timer } from './ui';
 import { CATEGORY_NAMES } from '../constants';
+import { getServerTime } from '../gameStorage';
 
 const CluePhase = ({ game, playerId, onSubmitClue, onSkipTurn, onKickPlayer }) => {
   const [clue, setClue] = useState('');
@@ -14,10 +15,11 @@ const CluePhase = ({ game, playerId, onSubmitClue, onSkipTurn, onKickPlayer }) =
   const isMyTurn = currentPlayer?.id === playerId && !isEliminated;
   const clueTime = game.settings.clueTime || 30;
 
-  // Synced timer based on turnStartTime
+  // Synced timer based on turnStartTime using server time
   const calculateTimeLeft = (allowNegative = false) => {
     if (!game.turnStartTime) return clueTime;
-    const elapsed = Math.floor((Date.now() - game.turnStartTime) / 1000);
+    const serverNow = getServerTime();
+    const elapsed = Math.floor((serverNow - game.turnStartTime) / 1000);
     const remaining = clueTime - elapsed;
     return allowNegative ? remaining : Math.max(0, remaining);
   };

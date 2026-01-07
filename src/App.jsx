@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { PHASES, WORD_CATEGORIES } from './constants';
-import { generateId, generateRoomCode, pickRandom, shuffleArray, checkWinCondition } from './utils';
+import { generateId, generateRoomCode, pickRandom, shuffleArray, checkWinCondition, sanitizeGameForPlayer, validateClue, seededRandom } from './utils';
 import { loadGame, saveGame } from './gameStorage';
 
 // Import components
@@ -19,12 +19,14 @@ export default function ImpostorGame() {
   const [phase, setPhase] = useState(PHASES.HOME);
   const [game, setGame] = useState(null);
   const [playerId, setPlayerId] = useState(() => {
-    const stored = sessionStorage.getItem('impostorPlayerId');
+    // Use localStorage for persistence across tabs/sessions
+    const stored = localStorage.getItem('impostorPlayerId');
     return stored || generateId();
   });
   const [error, setError] = useState('');
   const pollingRef = useRef(null);
   const gameRef = useRef(null);
+  const rawGameRef = useRef(null); // Store unsanitized game for internal operations
 
   // Keep gameRef in sync
   useEffect(() => {
@@ -32,7 +34,7 @@ export default function ImpostorGame() {
   }, [game]);
 
   useEffect(() => {
-    sessionStorage.setItem('impostorPlayerId', playerId);
+    localStorage.setItem('impostorPlayerId', playerId);
   }, [playerId]);
 
   // Polling with ref to avoid stale closure
@@ -45,9 +47,11 @@ export default function ImpostorGame() {
       const latest = await loadGame(roomCode);
       if (!latest) return;
 
-      // Check if current player was kicked (not in players list anymore)
+      // Check if current player was kicked
       const stillInGame = latest.players.some(p => p.id === playerId);
-      if (!stillInGame) {
+      const wasKicked = latest.kickedPlayerIds?.includes(playerId);
+
+      if (!stillInGame || wasKicked) {
         // Player was kicked - redirect to home
         setGame(null);
         setPhase(PHASES.HOME);
@@ -56,10 +60,24 @@ export default function ImpostorGame() {
         return;
       }
 
+      // Host migration: if host left, assign new host to first remaining player
+      let updatedGame = latest;
+      const hostStillInGame = latest.players.some(p => p.id === latest.hostId);
+      if (!hostStillInGame && latest.players.length > 0) {
+        updatedGame = { ...latest, hostId: latest.players[0].id };
+        await saveGame(updatedGame);
+      }
+
+      // Store raw game for internal operations
+      rawGameRef.current = updatedGame;
+
+      // Sanitize game state for this player (hide secret word from impostors)
+      const sanitizedGame = sanitizeGameForPlayer(updatedGame, playerId);
+
       const currentGame = gameRef.current;
-      if (JSON.stringify(latest) !== JSON.stringify(currentGame)) {
-        setGame(latest);
-        setPhase(latest.phase);
+      if (JSON.stringify(sanitizedGame) !== JSON.stringify(currentGame)) {
+        setGame(sanitizedGame);
+        setPhase(sanitizedGame.phase);
       }
     };
 
@@ -91,12 +109,16 @@ export default function ImpostorGame() {
       phaseStartTime: null,
       votes: {},
       eliminatedId: null,
+      eliminatedIds: [],
+      kickedPlayerIds: [], // Track kicked players to prevent rejoin
       winner: null,
+      version: 1, // Optimistic locking version
       createdAt: Date.now()
     };
 
     const saved = await saveGame(newGame);
     if (saved) {
+      rawGameRef.current = newGame;
       setGame(newGame);
       setPhase(PHASES.LOBBY);
       window.location.hash = roomCode;
@@ -115,8 +137,14 @@ export default function ImpostorGame() {
       setError('Game already in progress');
       return;
     }
+    // Check if player was kicked from this game
+    if (existing.kickedPlayerIds?.includes(playerId)) {
+      setError('You were kicked from this game');
+      return;
+    }
     if (existing.players.find((p) => p.id === playerId)) {
-      setGame(existing);
+      rawGameRef.current = existing;
+      setGame(sanitizeGameForPlayer(existing, playerId));
       setPhase(existing.phase);
       return;
     }
@@ -125,9 +153,14 @@ export default function ImpostorGame() {
       return;
     }
 
-    existing.players.push({ id: playerId, name: name.trim() });
-    await saveGame(existing);
-    setGame(existing);
+    const updated = {
+      ...existing,
+      players: [...existing.players, { id: playerId, name: name.trim() }],
+      version: (existing.version || 0) + 1
+    };
+    await saveGame(updated);
+    rawGameRef.current = updated;
+    setGame(sanitizeGameForPlayer(updated, playerId));
     setPhase(PHASES.LOBBY);
     window.location.hash = code;
   };
@@ -148,13 +181,15 @@ export default function ImpostorGame() {
     const updated = {
       ...latestGame,
       players: latestGame.players.filter(p => p.id !== kickedPlayerId),
+      // Track kicked players to prevent rejoin
+      kickedPlayerIds: [...(latestGame.kickedPlayerIds || []), kickedPlayerId],
       // Remove from impostorIds if they were an impostor
       impostorIds: (latestGame.impostorIds || []).filter(id => id !== kickedPlayerId),
       // Remove from eliminatedIds if they were eliminated
       eliminatedIds: (latestGame.eliminatedIds || []).filter(id => id !== kickedPlayerId),
       // Remove their clues
       clues: (latestGame.clues || []).filter(c => c.playerId !== kickedPlayerId),
-      // Remove their votes
+      // Remove their votes and votes for them
       votes: Object.fromEntries(
         Object.entries(latestGame.votes || {})
           .filter(([voterId]) => voterId !== kickedPlayerId)
@@ -165,7 +200,8 @@ export default function ImpostorGame() {
               : votedFor === kickedPlayerId ? null : votedFor
           ])
           .filter(([, v]) => v !== null && (Array.isArray(v) ? v.length > 0 : true))
-      )
+      ),
+      version: (latestGame.version || 0) + 1
     };
 
     // Check win condition after kick (during game phases)
@@ -193,7 +229,8 @@ export default function ImpostorGame() {
         if (allVoted && Object.keys(updated.votes).length > 0) {
           const finalUpdate = processVoteResult(updated);
           await saveGame(finalUpdate);
-          setGame(finalUpdate);
+          rawGameRef.current = finalUpdate;
+          setGame(sanitizeGameForPlayer(finalUpdate, playerId));
           setPhase(finalUpdate.phase);
           return;
         }
@@ -201,7 +238,8 @@ export default function ImpostorGame() {
     }
 
     await saveGame(updated);
-    setGame(updated);
+    rawGameRef.current = updated;
+    setGame(sanitizeGameForPlayer(updated, playerId));
     setPhase(updated.phase);
   };
 
@@ -212,7 +250,9 @@ export default function ImpostorGame() {
       return;
     }
 
-    const impostorCount = Math.min(latestGame.settings.numImpostors, Math.floor(latestGame.players.length / 3));
+    // Ensure at least 1 impostor even with 3 players
+    const maxImpostors = Math.max(1, Math.floor(latestGame.players.length / 3));
+    const impostorCount = Math.min(latestGame.settings.numImpostors, maxImpostors);
     const shuffledForImpostors = shuffleArray(latestGame.players);
     const impostorIds = shuffledForImpostors.slice(0, impostorCount).map((p) => p.id);
 
@@ -233,10 +273,13 @@ export default function ImpostorGame() {
       eliminatedIds: [],
       lastEliminatedId: null,
       round: 1,
-      winner: null
+      winner: null,
+      voteSeed: Date.now(), // Seed for deterministic tie-breaking
+      version: (latestGame.version || 0) + 1
     };
     await saveGame(updated);
-    setGame(updated);
+    rawGameRef.current = updated;
+    setGame(sanitizeGameForPlayer(updated, playerId));
     setPhase(PHASES.CLUE);
   };
 
@@ -262,10 +305,13 @@ export default function ImpostorGame() {
     // Check if this player already has a clue (prevents duplicate skip)
     if (latestGame.clues.find(c => c.playerId === currentPlayer.id)) return;
 
-    const updated = { ...latestGame };
-    updated.clues.push({ playerId: currentPlayer.id, clue: '(skipped)' });
-    updated.currentClueIndex = updated.clues.length;
-    updated.turnStartTime = Date.now();
+    const updated = {
+      ...latestGame,
+      clues: [...latestGame.clues, { playerId: currentPlayer.id, clue: '(skipped)' }],
+      currentClueIndex: latestGame.clues.length + 1,
+      turnStartTime: Date.now(),
+      version: (latestGame.version || 0) + 1
+    };
 
     // Check if all alive players have submitted
     if (updated.clues.length >= alivePlayers.length) {
@@ -274,7 +320,8 @@ export default function ImpostorGame() {
     }
 
     await saveGame(updated);
-    setGame(updated);
+    rawGameRef.current = updated;
+    setGame(sanitizeGameForPlayer(updated, playerId));
     setPhase(updated.phase);
   };
 
@@ -287,7 +334,8 @@ export default function ImpostorGame() {
 
     // Check if player already submitted
     if (latestGame.clues.find(c => c.playerId === playerId)) {
-      setGame(latestGame);
+      rawGameRef.current = latestGame;
+      setGame(sanitizeGameForPlayer(latestGame, playerId));
       setPhase(latestGame.phase);
       return;
     }
@@ -299,22 +347,35 @@ export default function ImpostorGame() {
     const currentPlayer = alivePlayers.find(p => !latestGame.clues.find(c => c.playerId === p.id));
     if (!currentPlayer || currentPlayer.id !== playerId) {
       // Not this player's turn
-      setGame(latestGame);
+      rawGameRef.current = latestGame;
+      setGame(sanitizeGameForPlayer(latestGame, playerId));
       setPhase(latestGame.phase);
       return;
     }
 
     // Check if player is eliminated
     if (eliminatedIds.includes(playerId)) {
-      setGame(latestGame);
+      rawGameRef.current = latestGame;
+      setGame(sanitizeGameForPlayer(latestGame, playerId));
       setPhase(latestGame.phase);
       return;
     }
 
-    const updated = { ...latestGame };
-    updated.clues.push({ playerId, clue: clue.trim() });
-    updated.currentClueIndex = updated.clues.length;
-    updated.turnStartTime = Date.now();
+    // Validate clue content (non-impostors can't submit the secret word)
+    const isImpostor = latestGame.impostorIds.includes(playerId);
+    const validation = validateClue(clue, isImpostor ? null : latestGame.secretWord);
+    if (!validation.valid) {
+      setError(validation.error);
+      return;
+    }
+
+    const updated = {
+      ...latestGame,
+      clues: [...latestGame.clues, { playerId, clue: validation.clue }],
+      currentClueIndex: latestGame.clues.length + 1,
+      turnStartTime: Date.now(),
+      version: (latestGame.version || 0) + 1
+    };
 
     // Check if all alive players have submitted
     if (updated.clues.length >= alivePlayers.length) {
@@ -323,7 +384,8 @@ export default function ImpostorGame() {
     }
 
     await saveGame(updated);
-    setGame(updated);
+    rawGameRef.current = updated;
+    setGame(sanitizeGameForPlayer(updated, playerId));
     setPhase(updated.phase);
   };
 
@@ -331,9 +393,16 @@ export default function ImpostorGame() {
     const latestGame = await loadGame(game.roomCode);
     if (!latestGame || latestGame.phase !== PHASES.DISCUSSION) return;
 
-    const updated = { ...latestGame, phase: PHASES.VOTING, phaseStartTime: Date.now() };
+    const updated = {
+      ...latestGame,
+      phase: PHASES.VOTING,
+      phaseStartTime: Date.now(),
+      voteSeed: Date.now(), // New seed for this voting round
+      version: (latestGame.version || 0) + 1
+    };
     await saveGame(updated);
-    setGame(updated);
+    rawGameRef.current = updated;
+    setGame(sanitizeGameForPlayer(updated, playerId));
     setPhase(PHASES.VOTING);
   };
 
@@ -358,14 +427,21 @@ export default function ImpostorGame() {
     const maxVotes = Math.max(...Object.values(tally), 0);
     const playersWithMaxVotes = Object.entries(tally)
       .filter(([id, count]) => count === maxVotes)
-      .map(([id]) => id);
+      .map(([id]) => id)
+      .sort(); // Sort for determinism
 
-    // In case of tie, pick randomly among tied players
-    const eliminatedId = playersWithMaxVotes.length > 0
-      ? playersWithMaxVotes[Math.floor(Math.random() * playersWithMaxVotes.length)]
-      : null;
+    // Deterministic tie-breaking using voteSeed
+    let eliminatedId = null;
+    if (playersWithMaxVotes.length > 0) {
+      const seed = gameState.voteSeed || gameState.createdAt || Date.now();
+      const tieBreakIndex = Math.floor(seededRandom(seed + gameState.round) * playersWithMaxVotes.length);
+      eliminatedId = playersWithMaxVotes[tieBreakIndex];
+    }
 
-    const updated = { ...gameState };
+    const updated = {
+      ...gameState,
+      version: (gameState.version || 0) + 1
+    };
 
     if (eliminatedId) {
       updated.eliminatedIds = [...(updated.eliminatedIds || []), eliminatedId];
@@ -411,11 +487,12 @@ export default function ImpostorGame() {
     const updated = processVoteResult(latestGame);
 
     await saveGame(updated);
-    setGame(updated);
+    rawGameRef.current = updated;
+    setGame(sanitizeGameForPlayer(updated, playerId));
     setPhase(updated.phase);
   };
 
-  const vote = async (votedForIds) => {
+  const vote = async (votedForIds, skipVote = false) => {
     const latestGame = await loadGame(game.roomCode);
     if (!latestGame) {
       setError('Failed to submit vote');
@@ -425,7 +502,8 @@ export default function ImpostorGame() {
     const eliminatedIds = latestGame.eliminatedIds || [];
     if (eliminatedIds.includes(playerId)) {
       // Eliminated players can't vote
-      setGame(latestGame);
+      rawGameRef.current = latestGame;
+      setGame(sanitizeGameForPlayer(latestGame, playerId));
       setPhase(latestGame.phase);
       return;
     }
@@ -435,39 +513,60 @@ export default function ImpostorGame() {
 
     // Check if already voted the required number
     if (existingVotes.length >= votesPerPlayer) {
-      setGame(latestGame);
+      rawGameRef.current = latestGame;
+      setGame(sanitizeGameForPlayer(latestGame, playerId));
       setPhase(latestGame.phase);
       return;
     }
 
-    // Validate votes: filter out any votes for eliminated players or self
-    const validVotes = (Array.isArray(votedForIds) ? votedForIds : [votedForIds])
-      .filter(id => id !== playerId && !eliminatedIds.includes(id));
+    let validVotes;
+    if (skipVote) {
+      // Skip vote - mark as empty array (counts as having voted but no votes cast)
+      validVotes = ['__skip__'];
+    } else {
+      // Validate votes: filter out any votes for eliminated players or self
+      validVotes = (Array.isArray(votedForIds) ? votedForIds : [votedForIds])
+        .filter(id => id !== playerId && !eliminatedIds.includes(id) && id !== '__skip__');
 
-    if (validVotes.length === 0) {
-      setGame(latestGame);
-      setPhase(latestGame.phase);
-      return;
+      if (validVotes.length === 0) {
+        rawGameRef.current = latestGame;
+        setGame(sanitizeGameForPlayer(latestGame, playerId));
+        setPhase(latestGame.phase);
+        return;
+      }
     }
 
-    const updated = { ...latestGame };
-    updated.votes[playerId] = validVotes;
+    const updated = {
+      ...latestGame,
+      votes: { ...latestGame.votes, [playerId]: validVotes },
+      version: (latestGame.version || 0) + 1
+    };
 
     // Check if all alive players have voted their full allotment
     const alivePlayers = updated.players.filter(p => !(updated.eliminatedIds || []).includes(p.id));
     const allVoted = alivePlayers.every(p => {
       const pVotes = updated.votes[p.id] || [];
-      return pVotes.length >= votesPerPlayer;
+      // Skip votes count as having voted
+      return pVotes.length >= votesPerPlayer || pVotes.includes('__skip__');
     });
 
     if (allVoted) {
+      // Filter out skip votes before processing
+      const cleanedVotes = {};
+      Object.entries(updated.votes).forEach(([pid, votes]) => {
+        cleanedVotes[pid] = votes.filter(v => v !== '__skip__');
+      });
+      updated.votes = cleanedVotes;
+
       const finalUpdate = processVoteResult(updated);
       await saveGame(finalUpdate);
-      setGame(finalUpdate);
+      rawGameRef.current = finalUpdate;
+      setGame(sanitizeGameForPlayer(finalUpdate, playerId));
       setPhase(finalUpdate.phase);
     } else {
       await saveGame(updated);
-      setGame(updated);
+      rawGameRef.current = updated;
+      setGame(sanitizeGameForPlayer(updated, playerId));
       setPhase(updated.phase);
     }
   };
@@ -490,9 +589,16 @@ export default function ImpostorGame() {
         });
       }
 
-      const updated = { ...latestGame, winner, phase: PHASES.REVEAL, clueHistory };
+      const updated = {
+        ...latestGame,
+        winner,
+        phase: PHASES.REVEAL,
+        clueHistory,
+        version: (latestGame.version || 0) + 1
+      };
       await saveGame(updated);
-      setGame(updated);
+      rawGameRef.current = updated;
+      setGame(sanitizeGameForPlayer(updated, playerId));
       setPhase(PHASES.REVEAL);
       return;
     }
@@ -522,11 +628,14 @@ export default function ImpostorGame() {
       clueHistory,
       currentClueIndex: 0,
       turnStartTime: Date.now(),
-      votes: {}
+      votes: {},
+      voteSeed: Date.now(), // New seed for next round's voting
+      version: (latestGame.version || 0) + 1
     };
 
     await saveGame(updated);
-    setGame(updated);
+    rawGameRef.current = updated;
+    setGame(sanitizeGameForPlayer(updated, playerId));
     setPhase(PHASES.CLUE);
   };
 
@@ -537,7 +646,9 @@ export default function ImpostorGame() {
       return;
     }
 
-    const impostorCount = Math.min(latestGame.settings.numImpostors, Math.floor(latestGame.players.length / 3));
+    // Ensure at least 1 impostor
+    const maxImpostors = Math.max(1, Math.floor(latestGame.players.length / 3));
+    const impostorCount = Math.min(latestGame.settings.numImpostors, maxImpostors);
     const shuffledForImpostors = shuffleArray(latestGame.players);
     const impostorIds = shuffledForImpostors.slice(0, impostorCount).map((p) => p.id);
 
@@ -559,16 +670,20 @@ export default function ImpostorGame() {
       eliminatedIds: [],
       lastEliminatedId: null,
       round: 1,
-      winner: null
+      winner: null,
+      voteSeed: Date.now(),
+      version: (latestGame.version || 0) + 1
     };
     await saveGame(updated);
-    setGame(updated);
+    rawGameRef.current = updated;
+    setGame(sanitizeGameForPlayer(updated, playerId));
     setPhase(PHASES.CLUE);
   };
 
   const backToLobby = async () => {
+    const latestGame = await loadGame(game.roomCode);
     const updated = {
-      ...game,
+      ...(latestGame || game),
       phase: PHASES.LOBBY,
       secretWord: '',
       impostorIds: [],
@@ -581,9 +696,11 @@ export default function ImpostorGame() {
       eliminatedIds: [],
       lastEliminatedId: null,
       round: 1,
-      winner: null
+      winner: null,
+      version: ((latestGame || game).version || 0) + 1
     };
     await saveGame(updated);
+    rawGameRef.current = updated;
     setGame(updated);
     setPhase(PHASES.LOBBY);
   };

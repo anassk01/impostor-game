@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Button, Card, Timer } from './ui';
+import { getServerTime } from '../gameStorage';
 
 const DiscussionPhase = ({ game, playerId, onEndDiscussion, onKickPlayer }) => {
   const isHost = game.hostId === playerId;
@@ -7,10 +8,11 @@ const DiscussionPhase = ({ game, playerId, onEndDiscussion, onKickPlayer }) => {
   const discussionTime = game.settings.discussionTime || 60;
   const [hasTriggeredEnd, setHasTriggeredEnd] = useState(false);
 
-  // Synced timer based on phaseStartTime
+  // Synced timer based on phaseStartTime using server time
   const calculateTimeLeft = () => {
     if (!game.phaseStartTime) return discussionTime;
-    const elapsed = Math.floor((Date.now() - game.phaseStartTime) / 1000);
+    const serverNow = getServerTime();
+    const elapsed = Math.floor((serverNow - game.phaseStartTime) / 1000);
     return Math.max(0, discussionTime - elapsed);
   };
 

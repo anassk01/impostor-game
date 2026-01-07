@@ -9,14 +9,16 @@ const RoundResultPhase = ({ game, playerId, onNextRound }) => {
   const remainingImpostors = game.impostorIds.filter(id => !eliminatedIds.includes(id)).length;
   const totalImpostors = game.impostorIds.length;
 
-  // Calculate vote tally for display
+  // Calculate vote tally for display (excluding skip votes)
   const voteTally = {};
   Object.values(game.votes).forEach((v) => {
     if (Array.isArray(v)) {
       v.forEach(votedId => {
-        voteTally[votedId] = (voteTally[votedId] || 0) + 1;
+        if (votedId !== '__skip__') {
+          voteTally[votedId] = (voteTally[votedId] || 0) + 1;
+        }
       });
-    } else if (v) {
+    } else if (v && v !== '__skip__') {
       voteTally[v] = (voteTally[v] || 0) + 1;
     }
   });

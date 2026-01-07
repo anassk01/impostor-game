@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Button, Card, Timer } from './ui';
+import { getServerTime } from '../gameStorage';
 
 const VotingPhase = ({ game, playerId, onVote, onForceEndVoting, onKickPlayer }) => {
   const [selectedIds, setSelectedIds] = useState([]);
@@ -9,24 +10,27 @@ const VotingPhase = ({ game, playerId, onVote, onForceEndVoting, onKickPlayer })
   const alivePlayers = game.players.filter(p => !eliminatedIds.includes(p.id));
   const votesPerPlayer = game.settings.votesPerPlayer || 1;
   const myVotes = game.votes[playerId] || [];
-  const hasVoted = myVotes.length >= votesPerPlayer;
-  // Count how many players have completed all their votes
+  // Check if player has voted (including skip votes)
+  const hasVoted = myVotes.length >= votesPerPlayer || myVotes.includes('__skip__');
+  // Count how many players have completed all their votes (including skips)
   const playersWhoVoted = Object.entries(game.votes).filter(([pid, votes]) => {
     const requiredVotes = votesPerPlayer;
-    return Array.isArray(votes) ? votes.length >= requiredVotes : false;
+    return Array.isArray(votes) ? (votes.length >= requiredVotes || votes.includes('__skip__')) : false;
   }).length;
   const totalVoters = alivePlayers.length; // Only alive players vote
   const isHost = game.hostId === playerId;
   const votingTime = game.settings.votingTime || 45;
 
-  // Calculate live vote tally
+  // Calculate live vote tally (excluding skip votes)
   const voteTally = {};
   Object.values(game.votes).forEach((v) => {
     if (Array.isArray(v)) {
       v.forEach(votedId => {
-        voteTally[votedId] = (voteTally[votedId] || 0) + 1;
+        if (votedId !== '__skip__') {
+          voteTally[votedId] = (voteTally[votedId] || 0) + 1;
+        }
       });
-    } else if (v) {
+    } else if (v && v !== '__skip__') {
       voteTally[v] = (voteTally[v] || 0) + 1;
     }
   });
@@ -45,10 +49,11 @@ const VotingPhase = ({ game, playerId, onVote, onForceEndVoting, onKickPlayer })
     });
   };
 
-  // Synced timer based on phaseStartTime
+  // Synced timer based on phaseStartTime using server time
   const calculateTimeLeft = () => {
     if (!game.phaseStartTime) return votingTime;
-    const elapsed = Math.floor((Date.now() - game.phaseStartTime) / 1000);
+    const serverNow = getServerTime();
+    const elapsed = Math.floor((serverNow - game.phaseStartTime) / 1000);
     return Math.max(0, votingTime - elapsed);
   };
 
@@ -136,6 +141,12 @@ const VotingPhase = ({ game, playerId, onVote, onForceEndVoting, onKickPlayer })
                 ? `Confirm Vote${votesPerPlayer > 1 ? 's' : ''}`
                 : `Select ${votesPerPlayer - selectedIds.length} more`}
             </Button>
+            <button
+              onClick={() => onVote([], true)}
+              className="w-full mt-2 py-2 text-white/50 hover:text-white/80 text-sm transition"
+            >
+              Skip Vote (no elimination vote)
+            </button>
           </div>
         ) : (
           <div className="py-8">
