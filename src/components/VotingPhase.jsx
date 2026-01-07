@@ -19,6 +19,20 @@ const VotingPhase = ({ game, playerId, onVote, onForceEndVoting, onKickPlayer })
   const isHost = game.hostId === playerId;
   const votingTime = game.settings.votingTime || 45;
 
+  // Calculate live vote tally
+  const voteTally = {};
+  Object.values(game.votes).forEach((v) => {
+    if (Array.isArray(v)) {
+      v.forEach(votedId => {
+        voteTally[votedId] = (voteTally[votedId] || 0) + 1;
+      });
+    } else if (v) {
+      voteTally[v] = (voteTally[v] || 0) + 1;
+    }
+  });
+
+  const getVoteCount = (playerId) => voteTally[playerId] || 0;
+
   const toggleSelection = (id) => {
     if (id === playerId) return; // Can't vote for yourself
     setSelectedIds(prev => {
@@ -86,23 +100,33 @@ const VotingPhase = ({ game, playerId, onVote, onForceEndVoting, onKickPlayer })
                 Selected: {selectedIds.length}/{votesPerPlayer}
               </div>
             )}
-            {alivePlayers.map((p) => (
-              <button
-                key={p.id}
-                onClick={() => toggleSelection(p.id)}
-                disabled={p.id === playerId}
-                className={`w-full py-3 px-4 rounded-xl border transition ${
-                  p.id === playerId
-                    ? 'bg-white/5 border-white/10 text-white/30 cursor-not-allowed'
-                    : selectedIds.includes(p.id)
-                      ? 'bg-purple-500/30 border-purple-500 text-white'
-                      : 'bg-white/10 border-white/20 text-white hover:bg-white/20'
-                }`}
-              >
-                {p.name} {p.id === playerId ? '(You)' : ''}
-                {selectedIds.includes(p.id) && ' ✓'}
-              </button>
-            ))}
+            {alivePlayers.map((p) => {
+              const voteCount = getVoteCount(p.id);
+              return (
+                <button
+                  key={p.id}
+                  onClick={() => toggleSelection(p.id)}
+                  disabled={p.id === playerId}
+                  className={`w-full py-3 px-4 rounded-xl border transition flex justify-between items-center ${
+                    p.id === playerId
+                      ? 'bg-white/5 border-white/10 text-white/30 cursor-not-allowed'
+                      : selectedIds.includes(p.id)
+                        ? 'bg-purple-500/30 border-purple-500 text-white'
+                        : 'bg-white/10 border-white/20 text-white hover:bg-white/20'
+                  }`}
+                >
+                  <span>
+                    {p.name} {p.id === playerId ? '(You)' : ''}
+                    {selectedIds.includes(p.id) && ' ✓'}
+                  </span>
+                  {voteCount > 0 && (
+                    <span className="bg-red-500/30 text-red-300 px-2 py-1 rounded-full text-xs font-bold">
+                      {voteCount} vote{voteCount > 1 ? 's' : ''}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
             <Button
               onClick={() => onVote(selectedIds)}
               disabled={selectedIds.length !== votesPerPlayer}

@@ -6,6 +6,7 @@ const LobbyScreen = ({ game, playerId, onStartGame, onUpdateSettings, onKickPlay
   const isHost = game.hostId === playerId;
   const shareUrl = `${window.location.origin}${window.location.pathname}#${game.roomCode}`;
   const [copied, setCopied] = useState(false);
+  const [showRules, setShowRules] = useState(false);
 
   const copyLink = () => {
     navigator.clipboard.writeText(shareUrl);
@@ -140,6 +141,77 @@ const LobbyScreen = ({ game, playerId, onStartGame, onUpdateSettings, onKickPlay
           </Button>
         ) : (
           <div className="text-center text-white/60">Waiting for host to start...</div>
+        )}
+
+        {/* Rules Toggle */}
+        <button
+          onClick={() => setShowRules(!showRules)}
+          className="w-full mt-4 py-2 text-purple-300 hover:text-purple-200 text-sm transition"
+        >
+          {showRules ? '▲ Hide Rules' : '▼ Show Rules'}
+        </button>
+
+        {showRules && (
+          <div className="mt-4 p-4 rounded-xl bg-white/5 text-left">
+            <h3 className="text-white font-bold mb-3 text-center">📜 Game Rules</h3>
+
+            <div className="space-y-3 text-sm">
+              <div>
+                <div className="text-purple-300 font-semibold">🎯 Objective</div>
+                <div className="text-white/70">
+                  <span className="text-green-400">Crew:</span> Find and eliminate all impostors.<br/>
+                  <span className="text-red-400">Impostor:</span> Blend in and avoid detection.
+                </div>
+              </div>
+
+              <div>
+                <div className="text-purple-300 font-semibold">🔄 Game Flow</div>
+                <div className="text-white/70">
+                  1. Everyone sees a secret word (except impostors)<br/>
+                  2. Take turns giving one-word clues<br/>
+                  3. Discuss who seems suspicious<br/>
+                  4. Vote to eliminate someone<br/>
+                  5. Repeat until a team wins
+                </div>
+              </div>
+
+              <div>
+                <div className="text-purple-300 font-semibold">🗳️ Voting Rules</div>
+                <div className="text-white/70">
+                  • Player with most votes is eliminated<br/>
+                  • <span className="text-yellow-400">Tie:</span> Random selection among tied players<br/>
+                  • <span className="text-yellow-400">No votes:</span> No one is eliminated<br/>
+                  • Eliminated players can watch but not participate
+                </div>
+              </div>
+
+              <div>
+                <div className="text-purple-300 font-semibold">🏆 Win Conditions</div>
+                <div className="text-white/70">
+                  • <span className="text-green-400">Crew wins:</span> All impostors eliminated<br/>
+                  • <span className="text-red-400">Impostor wins:</span> Impostors equal or outnumber crew
+                </div>
+              </div>
+
+              <div>
+                <div className="text-purple-300 font-semibold">⏱️ Timers</div>
+                <div className="text-white/70">
+                  • Clue time: Per player, auto-skip if no clue<br/>
+                  • Discussion: Talk before voting<br/>
+                  • Voting: Cast votes within time limit
+                </div>
+              </div>
+
+              <div>
+                <div className="text-purple-300 font-semibold">🔁 Multiple Rounds</div>
+                <div className="text-white/70">
+                  • Impostors stay the same across rounds<br/>
+                  • New secret word each round<br/>
+                  • Game continues until win condition met
+                </div>
+              </div>
+            </div>
+          </div>
         )}
       </Card>
     </div>
